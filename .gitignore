@@ -1,5 +1,4 @@
 .cursor/
-.agents/
 .venv/
 __pycache__/
 data/mmm_idata.nc
