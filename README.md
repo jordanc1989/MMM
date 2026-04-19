@@ -4,11 +4,11 @@ A local web dashboard for **Bayesian Media Mix Modeling (MMM)**. It fits a hiera
 
 ## What it does
 
-The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with **geometric adstock** and **logistic saturation** on paid-media spend, plus controls and seasonality. Inference is **NUTS** (Hamiltonian Monte Carlo), posteriors are summarised with [ArviZ](https://python.arviz.org/) / [xarray](https://docs.xarray.dev/).
+The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** (Hamiltonian Monte Carlo) and posteriors are summarised with [ArviZ](https://python.arviz.org/).
 
 **Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data—not your production numbers—intended for demos and development.
 
-**Caching:** Fitted `InferenceData` is written to `data/mmm_idata.nc` (and a fingerprint file) so later launches reload the posterior instead of resampling, unless you refit or invalidate the cache. This saves quite a lot of time, intended for Streamlit-like behaviour.
+**Caching:** Fitted `InferenceData` is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache. This saves quite a lot of time, implemented for Streamlit-like behaviour.
 
 ## Pages
 
@@ -19,7 +19,12 @@ The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a mult
 | **Response curves** | Marginal response / saturation curves by channel |
 | **Optimiser** | Budget scenarios and recommended channel allocation derived from the fitted model |
 
-The header **Options** panel lets you adjust sampler settings (draws, tuning steps, target accept) and trigger a **refit**; successful runs persist settings to `data/mmm_sampler_config.json`.
+The header **Options** panel lets you adjust sampler settings like draws, tuning steps and target accept (with more to be added in the future) and trigger a **refit**. Successful runs persist settings to `data/mmm_sampler_config.json`.
+
+## To Add
+
+- File upload and mapping mechanism / make more UI friendly (at the moment, the data is uploaded all through backend)
+- Adding more user options to adjust MMM/sampler settings
 
 ## Stack
 
@@ -44,4 +49,4 @@ PyMC/PyTensor may need a working C++ toolchain or fall back to pure NumPy modes.
 
 ## Disclaimer
 
-This repository is a **demonstration** built on **simulated** data. Do not treat its outputs as business decisions without validating on your own data, priors and governance.
+This repository is a **demo** built on **simulated** data. Don't treat its outputs as business decisions without validating on your own data, priors and governance!
