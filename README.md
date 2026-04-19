@@ -8,7 +8,7 @@ The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a mult
 
 **Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data—not your production numbers—intended for demos and development.
 
-**Caching:** Fitted `InferenceData` is written to `data/mmm_idata.nc` (and a fingerprint file) so later launches reload the posterior instead of resampling, unless you refit or invalidate the cache.
+**Caching:** Fitted `InferenceData` is written to `data/mmm_idata.nc` (and a fingerprint file) so later launches reload the posterior instead of resampling, unless you refit or invalidate the cache. This saves quite a lot of time, intended for Streamlit-like behaviour.
 
 ## Pages
 
@@ -38,16 +38,10 @@ python app.py
 
 Open **http://127.0.0.1:8050**. The first model fit can take on the order of a minute while NUTS runs. Subsequent starts are faster when the NetCDF cache is present.
 
-## Configuration & generated files
-
-- `data/mmm_sampler_config.json` — optional; merged with built-in defaults for `draws`, `tune`, `target_accept`  
-- `data/mmm_idata.nc` — cached posterior (gitignored by default)  
-- `.pytensor_cache/` — PyTensor compile cache (gitignored)
-
 ## macOS note
 
 PyMC/PyTensor may need a working C++ toolchain or fall back to pure NumPy modes. The project sets a local PyTensor compile dir and, on Apple systems, can disable the C++ compiler unless `PYTENSOR_CXX` points to a working compiler. If sampling fails, check PyMC/PyTensor docs for your OS version.
 
 ## Disclaimer
 
-This repository is a **demonstration** built on **simulated** data. Do not treat its outputs as business decisions without validating on your own data, priors, and governance.
+This repository is a **demonstration** built on **simulated** data. Do not treat its outputs as business decisions without validating on your own data, priors and governance.
