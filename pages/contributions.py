@@ -1,4 +1,9 @@
-"""Channel Contributions page: stacked area, contribution %, per-channel table."""
+"""Channel Contributions page: stacked area, contribution %, per-channel table.
+
+The stacked-area HDI band shows posterior uncertainty for the *sum of paid channel
+contributions* only. Baseline (intercept, trend, seasonality, controls) is drawn at
+posterior mean, so the band is not a full predictive envelope for total revenue.
+"""
 
 from __future__ import annotations
 
@@ -7,9 +12,10 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, dcc
+from dash.exceptions import PreventUpdate
 
-from components.ids import GLOBAL_DATE_RANGE
 from components import CHANNEL_COLORS, apply_dark_theme, page_header, section
+from components.ids import MODEL_REFRESH_STORE
 from model.mmm import (
     ModelResult,
     channel_window_roi_hdi,
@@ -36,12 +42,14 @@ def _cumulative_stack_edges(result: ModelResult) -> list[np.ndarray]:
 
 
 def contributions_area_chart(result: ModelResult) -> go.Figure:
+    """Stack posterior-mean baseline and channels; optional 94% band on paid total only."""
     dates = pd.to_datetime(result.dates)
     edges = _cumulative_stack_edges(result)
     fig = go.Figure()
 
     paid_bounds = paid_increment_hdi_arrays(result)
     if paid_bounds is not None:
+        # Band = posterior mean baseline + paid-media quantiles (baseline uncertainty omitted).
         pl, ph = paid_bounds
         upper = np.asarray(result.baseline, dtype=float) + ph
         lower = np.asarray(result.baseline, dtype=float) + pl
@@ -280,7 +288,8 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
             ),
             section(
                 "Weekly Contribution Stack",
-                "Baseline, posterior-mean channel layers, and a 94% HDI band on total paid contribution.",
+                "Baseline at posterior mean, posterior-mean channel layers, and a 94% band on "
+                "total paid media only (uncertainty in baseline/controls/seasonality not shown).",
                 dcc.Graph(
                     id=CONTRIBUTION_STACK_GRAPH_ID,
                     figure=contributions_area_chart(result),
@@ -303,7 +312,7 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
                     dmc.GridCol(
                         section(
                             "Share of Paid Contribution",
-                            "Attributed revenue share across the selected window.",
+                            "Attributed revenue share across the full fitted period.",
                             dcc.Graph(
                                 id=CONTRIBUTION_SHARE_GRAPH_ID,
                                 figure=contribution_share_bar(result),
@@ -315,7 +324,7 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
                     dmc.GridCol(
                         section(
                             "Per-Channel Summary",
-                            "Spend, attributed revenue and ROI in the selected window.",
+                            "Spend, attributed revenue and ROI for the full fitted period.",
                             dmc.Box(id=CONTRIBUTIONS_TABLE_ID, children=channel_table(result)),
                         ),
                         span={"base": 12, "lg": 6},
@@ -327,33 +336,22 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
 
 
 def register_contributions_callbacks(app, results_by_geo: dict[str, ModelResult]) -> None:
-    base = results_by_geo["All"]
-
     @app.callback(
         Output(CONTRIBUTION_STACK_GRAPH_ID, "figure"),
         Output(CONTRIBUTIONS_ROI_GRAPH_ID, "figure"),
         Output(CONTRIBUTION_SHARE_GRAPH_ID, "figure"),
         Output(CONTRIBUTIONS_TABLE_ID, "children"),
-        Input(GLOBAL_DATE_RANGE, "start_date"),
-        Input(GLOBAL_DATE_RANGE, "end_date"),
+        Input("url", "pathname"),
+        Input(MODEL_REFRESH_STORE, "data"),
     )
-    def _update_contributions(start, end):
+    def _update_contributions(pathname: str | None, _refresh: int | None):
+        pathname = pathname or "/"
+        if pathname != "/contributions":
+            raise PreventUpdate
+        base = results_by_geo["All"]
         dmin = pd.to_datetime(base.dates).min()
         dmax = pd.to_datetime(base.dates).max()
-        if start is None:
-            start = dmin
-        else:
-            start = pd.Timestamp(start)
-        if end is None:
-            end = dmax
-        else:
-            end = pd.Timestamp(end)
-        start = max(start, dmin)
-        end = min(end, dmax)
-        if start > end:
-            start, end = end, start
-
-        sl = slice_model_result(base, start, end)
+        sl = slice_model_result(base, dmin, dmax)
         return (
             contributions_area_chart(sl),
             roi_vs_marginal_chart(sl),

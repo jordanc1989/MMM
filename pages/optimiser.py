@@ -9,6 +9,7 @@ from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from components import CHANNEL_COLORS, apply_dark_theme, kpi_card, page_header, section
+from components.ids import MODEL_REFRESH_STORE
 from model.mmm import ModelResult, optimise_budget, recommended_weekly_allocation
 
 SLIDER_ID = {"type": "budget-slider", "channel": ""}
@@ -242,7 +243,7 @@ def _roi_table(rows: list[dmc.TableTr]) -> dmc.Table:
 def build_optimiser(result: ModelResult) -> dmc.Stack:
     current_alloc = _current_weekly_alloc(result)
     total_weekly = sum(current_alloc.values())
-    total_annual = total_weekly * result.n_weeks
+    total_window = total_weekly * result.n_weeks
     weights = _default_weights(result)
     sliders = [_channel_row(c, weights[c], current_alloc[c]) for c in result.channels]
 
@@ -353,7 +354,10 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
                 label="Total weekly budget",
                 value=_fmt_currency(total_weekly),
                 icon="tabler:wallet",
-                helper=f"Locked · {_fmt_currency(total_annual)} annualised",
+                helper=(
+                    f"Locked · {_fmt_currency(total_window)} over "
+                    f"{result.n_weeks}-week fit window"
+                ),
             ),
             predicted_kpi,
             uplift_kpi,
@@ -494,9 +498,10 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
         Output({**WEIGHT_LABEL_ID, "channel": ALL}, "children"),
         Output({**ALLOC_LABEL_ID, "channel": ALL}, "children"),
         Input({**SLIDER_ID, "channel": ALL}, "value"),
+        Input(MODEL_REFRESH_STORE, "data"),
         State({**SLIDER_ID, "channel": ALL}, "id"),
     )
-    def _recalc(values, ids):
+    def _recalc(values, _refresh, ids):
         result = results_by_geo["All"]
         channels = [i["channel"] for i in ids]
 

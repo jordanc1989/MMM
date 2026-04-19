@@ -14,6 +14,8 @@ def kpi_card(
     icon: str,
     helper: str | None = None,
     sub: str | None = None,
+    yoy: str | None = None,
+    yoy_color: str = "dimmed",
     accent: str = "teal",
 ) -> dmc.Paper:
     """A shadow-elevated paper showing a labelled metric with a Tabler icon.
@@ -24,6 +26,8 @@ def kpi_card(
         icon: Tabler icon slug (e.g. `tabler:chart-bar`).
         helper: optional secondary line rendered under the value.
         sub: optional tertiary dimmed line (used e.g. for HDI bands).
+        yoy: optional year-over-year line (e.g. ``YoY +4.2%``).
+        yoy_color: Mantine color name for ``yoy`` (e.g. ``teal``, ``red``, ``dimmed``).
         accent: Mantine color used for the ThemeIcon.
     """
     body: list = [
@@ -45,6 +49,10 @@ def kpi_card(
         body.append(dmc.Text(helper, size="xs", c="dimmed"))
     if sub:
         body.append(dmc.Text(sub, size="xs", c="dimmed", fs="italic"))
+    if yoy:
+        body.append(
+            dmc.Text(yoy, size="xs", fw=600, c=yoy_color, className="mmm-numeric")
+        )
 
     return dmc.Paper(
         p="lg",

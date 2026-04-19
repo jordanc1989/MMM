@@ -10,7 +10,6 @@ from __future__ import annotations
 import urllib.request
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 
 MERIDIAN_CSV_URL = (
@@ -38,8 +37,16 @@ CONTROLS: list[str] = [
     "Organic_channel0_impression",
 ]
 
-TREND_COLUMNS: list[str] = ["t"]
-"""Column names injected by `aggregate_geo` to act as a linear-trend regressor."""
+TREND_COLUMNS: list[str] = []
+"""Linear-trend regressor column names injected by ``aggregate_geo``.
+
+Previously held a zero-centred ``t`` column, but the MMM diagnostic showed
+the regressor summed to zero by construction (so its total contribution was
+always ~$0) while the centring propagated a non-identifiable drift into the
+intercept. The seasonality Fourier basis already captures multi-year
+structure, so dropping the column improves identifiability without losing
+signal.
+"""
 
 
 def _download_if_missing() -> None:
@@ -100,6 +107,4 @@ def aggregate_geo(df: pd.DataFrame, geo: str | None) -> pd.DataFrame:
         out["geo"] = "All"
         out = out.sort_values("time").reset_index(drop=True)
 
-    n = len(out)
-    out["t"] = (np.arange(n) - (n - 1) / 2.0) / max(n, 1)
     return out

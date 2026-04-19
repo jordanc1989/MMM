@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from dash import Input, Output, dcc
 
 from components import CHANNEL_COLORS, apply_dark_theme, page_header, section
+from components.ids import MODEL_REFRESH_STORE
 from model.mmm import ModelResult, response_curve
 
 
@@ -163,10 +164,11 @@ def build_response_curves(result: ModelResult) -> dmc.Stack:
                         checkIconPosition="right",
                     ),
                     dmc.Text(
-                        "Vertical markers show the current spend and the point where incremental returns fall below 10%.",
+                        "Markers: average weekly spend (dotted) and spend where logistic "
+                        "saturation reaches 90% of its asymptote (diminishing-returns region to the right).",
                         size="xs",
                         c="dimmed",
-                        maw=520,
+                        maw=560,
                         ta="right",
                     ),
                 ],
@@ -195,8 +197,9 @@ def register_response_curve_callbacks(app, results_by_geo: dict[str, ModelResult
         Output(CHANNEL_GRAPH_ID, "figure"),
         Output(CHANNEL_STATS_ID, "children"),
         Input(CHANNEL_SELECT_ID, "value"),
+        Input(MODEL_REFRESH_STORE, "data"),
     )
-    def _update(channel: str):
+    def _update(channel: str, _refresh: int | None):
         result = results_by_geo["All"]
         if not channel:
             channel = result.channels[0]

@@ -1,9 +1,19 @@
-dash==4.1.*
-dash-mantine-components==2.6.1
+# Web UI — Plotly Dash + Mantine shell
+dash>=4.1,<5
+dash-mantine-components>=2.6.1,<3
 dash-iconify>=0.1.2
+
+# Charts & tabular data
 plotly>=6.0
 pandas>=2.2
 numpy>=2.0
+
+# Bayesian MMM — PyMC-Marketing (PyMC, PyTensor, ArviZ stack)
 pymc-marketing>=0.15
 arviz>=0.20
 xarray>=2024.1
+scipy>=1.11
+
+# NUTS: nutpie (JAX backend) for fast sampling; JAX installs matching jaxlib
+nutpie>=0.13
+jax>=0.10.0

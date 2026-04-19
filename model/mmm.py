@@ -6,28 +6,37 @@ Architecture:
               + yearly_seasonality_t        (Fourier, n_order=3)
               + sum_k gamma_k * control_k_t (economic controls)
               + sum_c beta_c * LogisticSaturation(
-                        GeometricAdstock(spend_{c,t}, alpha_c, l_max=8),
+                        GeometricAdstock(spend_{c,t}, alpha_c, l_max=ADSTOCK_L_MAX),
                         lam_c,
                     )
 
 The heavy lifting is done by `pymc_marketing.mmm.MMM` which samples with NUTS.
 The fitted `InferenceData` is cached to `data/mmm_idata.nc` so only the first
-launch pays the sampling cost.
+launch pays the sampling cost. NUTS ``draws`` / ``tune`` / ``target_accept`` are
+read from ``data/mmm_sampler_config.json`` when present (see dashboard Options)
+and are folded into the cache fingerprint alongside ``ADSTOCK_L_MAX``.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import arviz as az
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from data.loader import CHANNELS, CONTROLS, TREND_COLUMNS
+
+from .sampling_progress import SamplingProgressTracker
 
 # --- pytensor / macOS SDK preflight --------------------------------------
 # pymc-marketing -> pymc -> pytensor JIT-compiles C++; clang needs SDKROOT on
@@ -51,20 +60,200 @@ if "base_compiledir" not in _existing:
         f"{_existing},base_compiledir={_COMPILEDIR}".lstrip(",")
     )
 
-from pymc_marketing.mmm import (  # noqa: E402
+# macOS: clang++ often fails on `#include <vector>` (SDK / toolchain mismatch). Disabling
+# PyTensor's C++ compiler forces pure NumPy/C fallbacks; pair with nutpie for NUTS.
+# Set PYTENSOR_CXX to a working compiler path to re-enable C++ ops instead.
+if sys.platform == "darwin":
+    import pytensor
+
+    pytensor.config.cxx = os.environ.get("PYTENSOR_CXX", "")
+
+from pymc_marketing.mmm import (
     GeometricAdstock,
     LogisticSaturation,
 )
-from pymc_marketing.mmm.multidimensional import MMM  # noqa: E402
+from pymc_marketing.mmm.multidimensional import MMM
+from pymc_marketing.prior import Prior
 
 # ---- constants ----------------------------------------------------------
 
 CHANNEL_COLUMNS: list[str] = [f"{c}_spend" for c in CHANNELS]
 CONTROL_COLUMNS: list[str] = CONTROLS + TREND_COLUMNS
-ADSTOCK_L_MAX = 8
+# Single geometric-adstock lag horizon (weeks) for all channels — not tied to labels.
+ADSTOCK_L_MAX = 12
 FOURIER_N_ORDER = 3
 
+# ``MODEL_CONFIG_VERSION`` is folded into the idata fingerprint so any change
+# to the prior structure forces a refit of the cached posterior.
+MODEL_CONFIG_VERSION = "v3-gamma-saturation-priors-2026-04"
+
 IDATA_PATH = Path(__file__).resolve().parent.parent / "data" / "mmm_idata.nc"
+IDATA_FINGERPRINT_PATH = Path(__file__).resolve().parent.parent / "data" / "mmm_idata.sha256"
+SAMPLER_CONFIG_PATH = Path(__file__).resolve().parent.parent / "data" / "mmm_sampler_config.json"
+
+DEFAULT_SAMPLER_CONFIG: dict[str, float | int] = {
+    "draws": 2000,
+    "tune": 2000,
+    "target_accept": 0.95,
+}
+
+
+def load_sampler_config() -> dict[str, float | int]:
+    """Merge ``data/mmm_sampler_config.json`` with defaults (dashboard Options)."""
+    out = dict(DEFAULT_SAMPLER_CONFIG)
+    if not SAMPLER_CONFIG_PATH.exists():
+        return out
+    try:
+        raw = json.loads(SAMPLER_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return out
+    if isinstance(raw, dict):
+        if "draws" in raw:
+            out["draws"] = max(100, int(raw["draws"]))
+        if "tune" in raw:
+            out["tune"] = max(200, int(raw["tune"]))
+        if "target_accept" in raw:
+            ta = float(raw["target_accept"])
+            out["target_accept"] = min(0.9999, max(0.75, ta))
+    return out
+
+
+def save_sampler_config(cfg: dict[str, float | int]) -> None:
+    """Persist sampler settings for the next app launch."""
+    SAMPLER_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SAMPLER_CONFIG_PATH.write_text(
+        json.dumps(
+            {
+                "draws": int(cfg["draws"]),
+                "tune": int(cfg["tune"]),
+                "target_accept": float(cfg["target_accept"]),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _idata_fingerprint(
+    df: pd.DataFrame, sampler: dict[str, float | int] | None = None
+) -> str:
+    """Stable hash of training data + model spec + NUTS settings."""
+    s = sampler if sampler is not None else load_sampler_config()
+    h = hashlib.sha256()
+    h.update("|".join(CHANNEL_COLUMNS).encode("utf-8"))
+    h.update(b"||")
+    h.update("|".join(CONTROL_COLUMNS).encode("utf-8"))
+    h.update(
+        f"||{ADSTOCK_L_MAX}||{FOURIER_N_ORDER}||{MODEL_CONFIG_VERSION}".encode("utf-8")
+    )
+    h.update(
+        f"||draws={int(s['draws'])}||tune={int(s['tune'])}||"
+        f"ta={float(s['target_accept']):.6f}".encode("utf-8")
+    )
+    cols = ["time", *CHANNEL_COLUMNS, *CONTROL_COLUMNS, "revenue"]
+    sub = df[cols].sort_values("time").reset_index(drop=True)
+    h.update(pd.util.hash_pandas_object(sub, index=True).values.tobytes())
+    return h.hexdigest()
+
+
+def _log_mcmc_diagnostics(mmm: MMM) -> None:
+    """Log divergences, R-hat, and ESS for key parameters after sampling."""
+    idata = mmm.idata
+    div = 0
+    try:
+        div = int(idata.sample_stats["diverging"].sum().item())
+    except (KeyError, AttributeError):
+        pass
+    print(f"[MMM] MCMC divergences: {div}", flush=True)
+    if div > 0:
+        warnings.warn(
+            f"NUTS reported {div} divergences; consider more tuning or reparameterization.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+    if os.environ.get("MMM_STRICT_DIAGNOSTICS") == "1" and div > 0:
+        raise RuntimeError(
+            f"MMM_STRICT_DIAGNOSTICS is set: refusing to continue with {div} divergences"
+        )
+
+    post = idata.posterior
+    var_names = [
+        v
+        for v in (
+            "intercept",
+            "adstock_alpha",
+            "saturation_lam",
+            "saturation_beta",
+        )
+        if v in post
+    ]
+    if not var_names:
+        return
+    summ = az.summary(idata, var_names=var_names, round_to=4)
+    print("[MMM] ArviZ summary (key parameters):\n" + summ.to_string(), flush=True)
+    rhat_max = float(summ["r_hat"].max())
+    ess_bulk_min = float(summ["ess_bulk"].min()) if "ess_bulk" in summ.columns else float("nan")
+    print(
+        f"[MMM] max r_hat={rhat_max:.4f}, min ess_bulk={ess_bulk_min:.1f}",
+        flush=True,
+    )
+    if rhat_max > 1.01:
+        warnings.warn(
+            f"max r_hat {rhat_max:.4f} exceeds 1.01; chains may not have mixed.",
+            UserWarning,
+            stacklevel=2,
+        )
+
+
+def implied_half_life_weeks(alpha: float) -> float:
+    """Weeks until a one-off pulse retains 50% of its geometric adstock weight.
+
+    For a carryover coefficient ``alpha`` in (0, 1): half-life = ln(0.5) / ln(alpha).
+    """
+    a = float(np.clip(alpha, 1e-6, 1.0 - 1e-9))
+    return float(np.log(0.5) / np.log(a))
+
+
+def mcmc_diagnostics_bundle(idata) -> dict[str, float | int | list | None]:
+    """Compact MCMC stats for the dashboard (R-hat, ESS, divergences, energy, BFMI)."""
+    out: dict[str, float | int | list | None] = {}
+    try:
+        out["divergences"] = int(idata.sample_stats["diverging"].sum().item())
+    except (KeyError, AttributeError, TypeError):
+        out["divergences"] = None
+    try:
+        post_vars = [str(v) for v in idata.posterior.data_vars.keys()]
+        summ = az.summary(idata, var_names=post_vars, round_to=4)
+        out["max_r_hat"] = float(summ["r_hat"].max())
+        out["min_ess_bulk"] = float(summ["ess_bulk"].min())
+        out["min_ess_tail"] = float(summ["ess_tail"].min())
+    except Exception:  # noqa: BLE001
+        out["max_r_hat"] = None
+        out["min_ess_bulk"] = None
+        out["min_ess_tail"] = None
+    try:
+        bfmi = az.bfmi(idata)
+        arr = np.asarray(bfmi).ravel()
+        out["bfmi_per_chain"] = [float(x) for x in arr]
+        out["bfmi_mean"] = float(np.mean(arr))
+    except Exception:  # noqa: BLE001
+        out["bfmi_per_chain"] = None
+        out["bfmi_mean"] = None
+    try:
+        en = idata.sample_stats["energy"]
+        out["energy_mean"] = float(en.mean().item())
+        out["energy_sd"] = float(en.std().item())
+    except (KeyError, AttributeError, TypeError):
+        out["energy_mean"] = None
+        out["energy_sd"] = None
+    try:
+        out["chains"] = int(idata.posterior.sizes["chain"])
+        out["draws_per_chain"] = int(idata.posterior.sizes["draw"])
+    except (KeyError, AttributeError, TypeError):
+        out["chains"] = None
+        out["draws_per_chain"] = None
+    return out
 
 
 # ---- result container ---------------------------------------------------
@@ -104,6 +293,12 @@ class ModelResult:
     contribution_hdi: dict[str, tuple[np.ndarray, np.ndarray]] = field(
         default_factory=dict
     )
+
+    # Inference / UI metadata (optional for backwards compatibility)
+    mcmc_diagnostics: dict[str, float | int | list | None] | None = None
+    sampler_config: dict[str, float | int] | None = None
+    adstock_l_max: int = ADSTOCK_L_MAX
+    half_life_truncation_warning: str | None = None
 
     # Backwards-compat shim; older code referenced `saturation_k`.
     @property
@@ -197,7 +392,66 @@ def _channel_hdi_bands(
 # ---- fit / load ---------------------------------------------------------
 
 
-def _build_mmm() -> MMM:
+def _informed_model_config(df: pd.DataFrame) -> dict:
+    """Build a ``model_config`` with priors calibrated to the training data.
+
+    The v2 HalfNormal prior on ``saturation_beta`` combined with ``Gamma(3, 1)``
+    on ``saturation_lam`` produced a product-of-small-values funnel: both
+    parameters piled posterior mass near zero, flattening the logistic
+    saturation into a near-linear response and driving 29 NUTS divergences.
+
+    The v3 reparameterization breaks that funnel:
+
+    * ``saturation_beta`` uses ``Gamma(alpha=3, beta=3/beta_mean)`` per channel.
+      The prior mean is still anchored to each channel's share of total spend
+      (high-spend channels get a wider prior), but the mode is at
+      ``2·beta_mean/3`` — strictly positive — rather than zero. Equivalent
+      scale to the old HalfNormal, without the zero-mass pathology;
+    * ``saturation_lam`` is tightened from ``Gamma(3, 1)`` (mean 3, heavy
+      left tail) to ``Gamma(4, 2)`` (mean 2, mode 1.5) to concentrate
+      diminishing-returns curvature in the identifiable region;
+    * ``intercept`` and ``gamma_control`` stay tight around scaled-revenue
+      magnitudes so the sampler doesn't waste mass on impossible regions;
+    * ``adstock_alpha`` remains ``Beta(3, 3)`` — symmetric around 0.5 — so
+      the decay parameter is no longer pushed toward 0 by the default
+      ``Beta(1, 3)`` whose mean is 0.25.
+    """
+    spend_totals = np.array(
+        [float(df[col].sum()) for col in CHANNEL_COLUMNS], dtype=float
+    )
+    total = spend_totals.sum()
+    if total <= 0:
+        spend_shares = np.full(len(CHANNEL_COLUMNS), 1.0 / len(CHANNEL_COLUMNS))
+    else:
+        spend_shares = spend_totals / total
+    # Floor so minor channels still get non-trivial prior mass; ceiling avoids
+    # arbitrarily fat tails for the single dominant channel. Wrap in a
+    # DataArray with explicit ``channel`` dim so ``pymc_extras.Prior`` does
+    # not emit an implicit-conversion warning.
+    beta_mean = xr.DataArray(
+        np.clip(spend_shares, 0.05, 0.5),
+        dims=("channel",),
+        coords={"channel": list(CHANNEL_COLUMNS)},
+    )
+
+    return {
+        "intercept": Prior("Normal", mu=0.35, sigma=0.15, dims=()),
+        "likelihood": Prior(
+            "Normal",
+            sigma=Prior("HalfNormal", sigma=0.15, dims=()),
+            dims="date",
+        ),
+        "gamma_control": Prior("Normal", mu=0.0, sigma=0.1, dims="control"),
+        "gamma_fourier": Prior("Laplace", mu=0.0, b=0.05, dims="fourier_mode"),
+        "adstock_alpha": Prior("Beta", alpha=3.0, beta=3.0, dims="channel"),
+        "saturation_lam": Prior("Gamma", alpha=4.0, beta=2.0, dims="channel"),
+        "saturation_beta": Prior(
+            "Gamma", alpha=3.0, beta=3.0 / beta_mean, dims="channel"
+        ),
+    }
+
+
+def _build_mmm(df: pd.DataFrame) -> MMM:
     return MMM(
         date_column="time",
         channel_columns=CHANNEL_COLUMNS,
@@ -206,48 +460,97 @@ def _build_mmm() -> MMM:
         adstock=GeometricAdstock(l_max=ADSTOCK_L_MAX),
         saturation=LogisticSaturation(),
         yearly_seasonality=FOURIER_N_ORDER,
+        model_config=_informed_model_config(df),
     )
 
 
-def _fit_mmm(df: pd.DataFrame) -> MMM:
-    mmm = _build_mmm()
+def _fit_mmm(
+    df: pd.DataFrame,
+    sampler: dict[str, float | int],
+    progress: SamplingProgressTracker | None = None,
+) -> MMM:
+    mmm = _build_mmm(df)
     X = df[["time", *CHANNEL_COLUMNS, *CONTROL_COLUMNS]]
     y = df["revenue"]
-    mmm.fit(
-        X,
-        y,
-        draws=500,
-        tune=500,
-        chains=2,
-        target_accept=0.9,
-        random_seed=42,
-        progressbar=False,
-    )
-    mmm.sample_posterior_predictive(X, extend_idata=True, progressbar=False)
+    chains = 4
+    draws = int(sampler["draws"])
+    tune = int(sampler["tune"])
+    fit_kw: dict = {
+        "draws": draws,
+        "tune": tune,
+        "chains": chains,
+        "target_accept": float(sampler["target_accept"]),
+        "random_seed": 10,
+        "progressbar": True,
+        # Always nutpie+JAX: native PyMC NUTS can raise "zero to a negative power" in
+        # pymc_marketing's geometric adstock (`alpha ** lag` at alpha=0, lag=0). Nutpie
+        # does not hit that PyTensor path. Per-draw `callback=` exists only on pymc NUTS.
+        "nuts_sampler": "nutpie",
+        "nuts_sampler_kwargs": {"backend": "jax"},
+    }
+    if progress is not None:
+        progress.reset(
+            chains=chains, tune=tune, draws=draws, indeterminate=True
+        )
+    mmm.fit(X, y, **fit_kw)
+    if progress is not None:
+        progress.set_phase("ppc")
+    mmm.sample_posterior_predictive(X, extend_idata=True, progressbar=True)
+    if progress is not None:
+        progress.set_phase("idle")
+    _log_mcmc_diagnostics(mmm)
     return mmm
 
 
-def _load_or_fit(df: pd.DataFrame) -> MMM:
-    if IDATA_PATH.exists():
+def _invalidate_idata_cache() -> None:
+    for path in (IDATA_PATH, IDATA_FINGERPRINT_PATH):
+        try:
+            path.unlink()
+        except OSError:
+            pass
+
+
+def _reset_mmm_cache() -> None:
+    global _MMM_CACHE
+    _MMM_CACHE = None
+
+
+def _load_or_fit(
+    df: pd.DataFrame,
+    sampler: dict[str, float | int],
+    progress: SamplingProgressTracker | None = None,
+) -> MMM:
+    fp = _idata_fingerprint(df, sampler)
+    cache_ok = (
+        IDATA_PATH.exists()
+        and IDATA_FINGERPRINT_PATH.exists()
+        and IDATA_FINGERPRINT_PATH.read_text(encoding="utf-8").strip() == fp
+    )
+    if cache_ok:
         try:
             return MMM.load(str(IDATA_PATH))
         except Exception:  # noqa: BLE001
-            # Corrupt / incompatible cache — refit.
-            try:
-                IDATA_PATH.unlink()
-            except OSError:
-                pass
+            _invalidate_idata_cache()
+    elif IDATA_PATH.exists() and not cache_ok:
+        # Stale or legacy cache (missing/wrong fingerprint).
+        print(
+            "[MMM] Inference cache miss (data or model spec changed); refitting...",
+            flush=True,
+        )
+        _invalidate_idata_cache()
 
     print(
         "Fitting pymc-marketing MMM (first run ~60s, cached after)...",
         flush=True,
     )
-    mmm = _fit_mmm(df)
+    mmm = _fit_mmm(df, sampler, progress=progress)
     try:
         IDATA_PATH.parent.mkdir(parents=True, exist_ok=True)
         mmm.save(str(IDATA_PATH))
+        IDATA_FINGERPRINT_PATH.write_text(fp + "\n", encoding="utf-8")
     except Exception as exc:  # noqa: BLE001
         print(f"(warning) failed to cache InferenceData: {exc}", flush=True)
+    _reset_mmm_cache()
     return mmm
 
 
@@ -355,7 +658,12 @@ def _r2_hdi_from_components_masked(
     return _r2_hdi(y_sel, y_draws, prob=prob)
 
 
-def _build_result(mmm: MMM, df: pd.DataFrame, geo_label: str) -> ModelResult:
+def _build_result(
+    mmm: MMM,
+    df: pd.DataFrame,
+    geo_label: str,
+    sampler: dict[str, float | int],
+) -> ModelResult:
     df = df.sort_values("time").reset_index(drop=True)
     dates = df["time"].values
     revenue = df["revenue"].to_numpy(dtype=float)
@@ -399,10 +707,13 @@ def _build_result(mmm: MMM, df: pd.DataFrame, geo_label: str) -> ModelResult:
         col = CHANNEL_COLUMNS[i]
         contribution_hdi[c] = _channel_hdi_bands(post, col, target_scale)
 
-    trend_col = TREND_COLUMNS[0]
-    trend_contribution = (
-        control_contribution_scaled.sel(control=trend_col).to_numpy() * target_scale
-    )
+    if TREND_COLUMNS:
+        trend_col = TREND_COLUMNS[0]
+        trend_contribution = (
+            control_contribution_scaled.sel(control=trend_col).to_numpy() * target_scale
+        )
+    else:
+        trend_contribution = np.zeros(len(df))
 
     control_contributions: dict[str, np.ndarray] = {}
     for k in CONTROLS:
@@ -433,6 +744,20 @@ def _build_result(mmm: MMM, df: pd.DataFrame, geo_label: str) -> ModelResult:
     # draw, back-scale to currency, and compute R^2 against observed revenue.
     r2_hdi = _r2_hdi_from_components(post, revenue, target_scale)
 
+    mcmc_diag = mcmc_diagnostics_bundle(mmm.idata)
+    half_life_by_ch: dict[str, float] = {
+        c: implied_half_life_weeks(decays_out[c]) for c in CHANNELS
+    }
+
+    trunc_note: str | None = None
+    over = [c for c, hl in half_life_by_ch.items() if hl > float(ADSTOCK_L_MAX) + 0.5]
+    if over:
+        trunc_note = (
+            f"Posterior mean half-life exceeds adstock l_max={ADSTOCK_L_MAX} weeks for: "
+            f"{', '.join(over)}. The geometric kernel is truncated; consider raising "
+            f"ADSTOCK_L_MAX in model/mmm.py."
+        )
+
     return ModelResult(
         geo=geo_label,
         channels=list(CHANNELS),
@@ -457,13 +782,26 @@ def _build_result(mmm: MMM, df: pd.DataFrame, geo_label: str) -> ModelResult:
         mape=_mape(revenue, fitted),
         r2_hdi=r2_hdi,
         contribution_hdi=contribution_hdi,
+        mcmc_diagnostics=mcmc_diag,
+        sampler_config=dict(sampler),
+        adstock_l_max=ADSTOCK_L_MAX,
+        half_life_truncation_warning=trunc_note,
     )
 
 
-def fit_surrogate(df: pd.DataFrame, geo_label: str = "All") -> ModelResult:
+def fit_surrogate(
+    df: pd.DataFrame,
+    geo_label: str = "All",
+    sampler_config: dict[str, float | int] | None = None,
+    *,
+    progress: SamplingProgressTracker | None = None,
+) -> ModelResult:
     """Fit (or load from disk cache) the Bayesian MMM and assemble ModelResult."""
-    mmm = _load_or_fit(df)
-    return _build_result(mmm, df, geo_label)
+    sampler = (
+        dict(sampler_config) if sampler_config is not None else load_sampler_config()
+    )
+    mmm = _load_or_fit(df, sampler, progress=progress)
+    return _build_result(mmm, df, geo_label, sampler)
 
 
 # ---- deterministic forward pass (for curves / optimiser) -----------------
@@ -552,7 +890,10 @@ def optimise_budget(
     result: ModelResult,
     allocation: dict[str, float],
 ) -> dict[str, float | dict[str, float]]:
-    """Predicted annualised revenue for a weekly allocation, using posterior means."""
+    """Predicted total revenue over the fit window for a weekly allocation (posterior means).
+
+    Scales steady-state weekly contributions by ``result.n_weeks``; not calendar-year annualisation.
+    """
     weeks = result.n_weeks
 
     per_channel: dict[str, float] = {}
@@ -676,15 +1017,50 @@ def slice_model_result(
         mape=mape,
         r2_hdi=r2_hdi,
         contribution_hdi=contribution_hdi,
+        mcmc_diagnostics=result.mcmc_diagnostics,
+        sampler_config=result.sampler_config,
+        adstock_l_max=result.adstock_l_max,
+        half_life_truncation_warning=result.half_life_truncation_warning,
     )
 
 
 def posterior_predictive_interval_df(result: ModelResult) -> pd.DataFrame | None:
-    """94% predictive intervals for revenue (original scale) from cached InferenceData."""
+    """94% predictive intervals for revenue (original scale) from cached InferenceData.
+
+    Bypasses ``mmm.summary.posterior_predictive``: in the single-geo multidimensional
+    model path, pymc-marketing stores ``target_scale`` with a spurious length-1
+    ``target_scale_dim_0`` coordinate that leaks into ``custom_dims`` and makes the
+    library's internal merge with ``observed`` raise ``KeyError``. We compute the HDI
+    directly from ``idata.posterior_predictive["y"]`` using the known scalar
+    ``result.target_scale`` to stay in original currency units.
+    """
     mmm = _cached_mmm()
     if mmm is None:
         return None
-    return mmm.summary.posterior_predictive(hdi_probs=[0.94])
+    pp = getattr(mmm.idata, "posterior_predictive", None)
+    if pp is None or "y" not in pp:
+        return None
+
+    y_scaled = pp["y"]
+    keep = {"chain", "draw", "date"}
+    squeezable = [
+        d for d in y_scaled.dims if d not in keep and y_scaled.sizes[d] == 1
+    ]
+    if squeezable:
+        y_scaled = y_scaled.isel({d: 0 for d in squeezable}, drop=True)
+
+    y = y_scaled * float(result.target_scale)
+    hdi = az.hdi(y, hdi_prob=0.94)["y"]
+    lower = hdi.sel(hdi="lower").to_numpy().astype(float)
+    upper = hdi.sel(hdi="higher").to_numpy().astype(float)
+    dates = pd.to_datetime(y.coords["date"].values)
+    return pd.DataFrame(
+        {
+            "date": dates,
+            "abs_error_94_lower": lower,
+            "abs_error_94_upper": upper,
+        }
+    )
 
 
 def posterior_predictive_interval_for_result(result: ModelResult) -> pd.DataFrame | None:
@@ -776,36 +1152,57 @@ def channel_window_roi_hdi(
 
 
 def recommended_weekly_allocation(result: ModelResult) -> dict[str, float]:
-    """Approximately optimal weekly mix under steady-state `optimise_budget` (SLSQP)."""
+    """Approximately optimal weekly mix under steady-state `optimise_budget` (SLSQP).
+
+    Optimises only the paid-media contribution (the baseline is constant w.r.t. the
+    allocation) and supplies an analytic Jacobian so SLSQP's finite-difference
+    gradient doesn't get swamped by the large baseline revenue term — which
+    previously caused ``ftol`` to fire immediately and return the current mix.
+    """
     from scipy.optimize import minimize
 
     channels = result.channels
     cur = {c: float(np.mean(result.spend[c])) for c in channels}
     total = float(sum(cur.values())) or 1.0
 
-    def neg_rev(w_raw: np.ndarray) -> float:
-        w = np.maximum(w_raw, 0.0)
-        s = float(w.sum())
-        if s <= 0:
-            return 0.0
-        w = w / s
-        alloc = {c: w[i] * total for i, c in enumerate(channels)}
-        return -float(optimise_budget(result, alloc)["total_revenue"])
+    lam = np.array([float(result.saturation_lam[c]) for c in channels])
+    beta = np.array([float(result.betas[c]) for c in channels])
+    scale = np.array(
+        [max(float(result.channel_scale[c]), 1e-12) for c in channels]
+    )
+
+    def _sat(x: np.ndarray) -> np.ndarray:
+        return (1.0 - np.exp(-lam * x)) / (1.0 + np.exp(-lam * x))
+
+    def neg_paid(w: np.ndarray) -> float:
+        spend = np.maximum(w, 0.0) * total
+        sat = _sat(spend / scale)
+        return -float(np.sum(beta * sat))
+
+    def jac(w: np.ndarray) -> np.ndarray:
+        spend = np.maximum(w, 0.0) * total
+        sat = _sat(spend / scale)
+        d_contrib_dw = beta * (lam * (1.0 - sat * sat) / 2.0) * (total / scale)
+        return -d_contrib_dw
 
     n = len(channels)
     x0 = np.array([cur[c] / total for c in channels])
     bounds = [(0.0, 1.0)] * n
     cons = ({"type": "eq", "fun": lambda x: float(np.sum(x)) - 1.0},)
     res = minimize(
-        neg_rev,
+        neg_paid,
         x0,
+        jac=jac,
         method="SLSQP",
         bounds=bounds,
         constraints=cons,
-        options={"maxiter": 800, "ftol": 1e-6},
+        options={"maxiter": 800, "ftol": 1e-10},
     )
     w = np.maximum(res.x, 0.0)
-    w = w / w.sum()
+    s = float(w.sum())
+    if s <= 0:
+        return {c: cur[c] for c in channels}
+    w = w / s
     return {c: float(w[i] * total) for i, c in enumerate(channels)}
 
 
