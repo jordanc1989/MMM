@@ -1,0 +1,9 @@
+dash==4.1.*
+dash-mantine-components==2.6.1
+dash-iconify>=0.1.2
+plotly>=6.0
+pandas>=2.2
+numpy>=2.0
+pymc-marketing>=0.15
+arviz>=0.20
+xarray>=2024.1

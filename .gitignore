@@ -1,0 +1,8 @@
+.cursor/
+.agents/
+.venv/
+__pycache__/
+data/mmm_idata.nc
+data/mmm_idata/
+.pytensor_cache/
+.DS_Store
