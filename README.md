@@ -1,6 +1,6 @@
 # MMM Dashboard
 
-A local web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a hierarchical MMM on sample marketing data, then explores channel effects, budget trade-offs and optimisation in an interactive UI.
+A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a hierarchical MMM on sample marketing data then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
 
 ## Screenshots
 
@@ -21,7 +21,7 @@ The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a mult
 
 **Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data for demo purposes.
 
-**Caching:** Fitted `InferenceData` is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache. This saves quite a lot of time, implemented for Streamlit-like behaviour.
+**Caching:** Fitted inference data is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache. This saves quite a lot of time and was implemented for Streamlit-like behaviour.
 
 ## Pages
 
