@@ -54,7 +54,7 @@ pip install -r requirements.txt
 python app.py
 ```
 
-Open **http://127.0.0.1:8050**. The first model fit can take on the order of a minute while NUTS runs. Subsequent starts are faster when the NetCDF cache is present.
+Open **http://127.0.0.1:8050**. The first model fit can take around a minute or two while NUTS runs. Subsequent starts should be faster.
 
 ## macOS note
 
@@ -62,4 +62,4 @@ PyMC/PyTensor may need a working C++ toolchain or fall back to pure NumPy modes.
 
 ## Disclaimer
 
-This repository is a **demo** built on **simulated** data. Don't treat its outputs as business decisions without validating on your own data, priors and governance!
+This repository is a **demo** built on simulated data. Don't treat its outputs as business decisions without validating on your own data, priors and governance!
