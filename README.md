@@ -2,6 +2,19 @@
 
 A local web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a hierarchical MMM on sample marketing data, then explores channel effects, budget trade-offs and optimisation in an interactive UI.
 
+## Screenshots
+
+<table>
+  <tr>
+    <td><img src="img/MMM-screenshot-overview.png" alt="MMM Dashboard Overview" /></td>
+    <td><img src="img/MMM-screenshot-optimiser.png" alt="MMM Dashboard Optimiser" /></td>
+  </tr>
+  <tr>
+    <td align="center"><em>Overview dashboard</em></td>
+    <td align="center"><em>Budget optimiser view</em></td>
+  </tr>
+</table>
+
 ## What it does
 
 The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** (Hamiltonian Monte Carlo) and posteriors are summarised with [ArviZ](https://python.arviz.org/).

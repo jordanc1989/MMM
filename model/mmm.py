@@ -168,7 +168,7 @@ def _log_mcmc_diagnostics(mmm: MMM) -> None:
     print(f"[MMM] MCMC divergences: {div}", flush=True)
     if div > 0:
         warnings.warn(
-            f"NUTS reported {div} divergences; consider more tuning or reparameterization.",
+            f"NUTS reported {div} divergences, consider more tuning or reparameterisation.",
             RuntimeWarning,
             stacklevel=2,
         )
@@ -395,25 +395,17 @@ def _channel_hdi_bands(
 def _informed_model_config(df: pd.DataFrame) -> dict:
     """Build a ``model_config`` with priors calibrated to the training data.
 
-    The v2 HalfNormal prior on ``saturation_beta`` combined with ``Gamma(3, 1)``
-    on ``saturation_lam`` produced a product-of-small-values funnel: both
-    parameters piled posterior mass near zero, flattening the logistic
-    saturation into a near-linear response and driving 29 NUTS divergences.
-
-    The v3 reparameterization breaks that funnel:
-
     * ``saturation_beta`` uses ``Gamma(alpha=3, beta=3/beta_mean)`` per channel.
       The prior mean is still anchored to each channel's share of total spend
       (high-spend channels get a wider prior), but the mode is at
-      ``2·beta_mean/3`` — strictly positive — rather than zero. Equivalent
-      scale to the old HalfNormal, without the zero-mass pathology;
+      ``2·beta_mean/3`` (strictly positive rather than zero).
     * ``saturation_lam`` is tightened from ``Gamma(3, 1)`` (mean 3, heavy
       left tail) to ``Gamma(4, 2)`` (mean 2, mode 1.5) to concentrate
-      diminishing-returns curvature in the identifiable region;
+      diminishing-returns curvature in the identifiable region.
     * ``intercept`` and ``gamma_control`` stay tight around scaled-revenue
-      magnitudes so the sampler doesn't waste mass on impossible regions;
-    * ``adstock_alpha`` remains ``Beta(3, 3)`` — symmetric around 0.5 — so
-      the decay parameter is no longer pushed toward 0 by the default
+      magnitudes so the sampler doesn't waste mass on impossible regions.
+    * ``adstock_alpha`` remains ``Beta(3, 3)`` — symmetric around 0.5, so
+      the decay parameter no longer pushed toward 0 by the default
       ``Beta(1, 3)`` whose mean is 0.25.
     """
     spend_totals = np.array(
