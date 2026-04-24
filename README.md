@@ -36,7 +36,6 @@ The header **Options** panel lets you adjust sampler settings like draws, tuning
 
 ## To Add
 
-- File upload and mapping mechanism / make more UI friendly (at the moment, the data is uploaded all through backend)
 - Adding more user options to adjust MMM/sampler settings
 
 ## Stack
@@ -44,14 +43,13 @@ The header **Options** panel lets you adjust sampler settings like draws, tuning
 - **UI:** [Dash](https://dash.plotly.com/) 4.x, [Dash Mantine Components](https://www.dash-mantine-components.com/), [Plotly](https://plotly.com/python/) figures  
 - **Model:** `pymc-marketing`, PyMC, optional **nutpie** + **JAX** for sampling throughput  
 - **Python:** 3.10+ recommended (match your `pymc-marketing` wheel availability)
+- **Package manager:** [uv](https://github.com/astral-sh/uv) (used for dependency management)
 
 ## Run locally
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate   # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-python app.py
+uv sync
+uv run python app.py
 ```
 
 Open **http://127.0.0.1:8050**. The first model fit can take around a minute or two while NUTS runs. Subsequent starts should be faster.
