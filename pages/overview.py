@@ -31,7 +31,6 @@ from model.mmm import (
 )
 
 ACTUAL_PREDICTED_GRAPH_ID = "overview-actual-predicted-graph"
-ACTUAL_PREDICTED_CLIP_ID = "overview-actual-predicted-clip"
 OVERVIEW_KPI_GRID_ID = "overview-kpis"
 OVERVIEW_WATERFALL_ID = "overview-waterfall"
 OVERVIEW_RESIDUALS_ID = "overview-residuals"
@@ -132,7 +131,7 @@ def mcmc_diagnostics_panel(result: ModelResult) -> dmc.Stack:
 # ---------- charts ---------------------------------------------------------
 
 
-def actual_vs_predicted_chart(result: ModelResult, *, clip_y: bool = False) -> go.Figure:
+def actual_vs_predicted_chart(result: ModelResult) -> go.Figure:
     dates = pd.to_datetime(result.dates)
     fig = go.Figure()
 
@@ -194,15 +193,6 @@ def actual_vs_predicted_chart(result: ModelResult, *, clip_y: bool = False) -> g
         yaxis_tickformat=".2s",
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
     )
-    if clip_y:
-        y_min = float(min(result.revenue.min(), result.fitted.min()))
-        y_max = float(max(result.revenue.max(), result.fitted.max()))
-        if pp is not None and len(pp) > 0:
-            y_min = float(min(y_min, pp["abs_error_94_lower"].min()))
-            y_max = float(max(y_max, pp["abs_error_94_upper"].max()))
-        lower = max(0.0, y_min * 0.98)
-        upper = y_max * 1.02
-        fig.update_yaxes(range=[lower, upper])
     return apply_dark_theme(fig, height=360)
 
 
@@ -364,6 +354,12 @@ def _fmt_currency(v: float) -> str:
     return f"${v:,.0f}"
 
 
+def _fmt_pct_opt(x: float | int | None) -> str:
+    if x is None:
+        return "—"
+    return f"{float(x) * 100:.1f}%"
+
+
 def _bounds(base: ModelResult) -> tuple[pd.Timestamp, pd.Timestamp]:
     d = pd.to_datetime(base.dates)
     return pd.Timestamp(d.min()), pd.Timestamp(d.max())
@@ -438,14 +434,13 @@ def _build_kpi_grid(
     total_rev = result.total_revenue
     paid_share = sum(result.total_contribution.values()) / total_rev if total_rev else 0.0
     lo, hi = result.r2_hdi
+    temporal = result.temporal_validation or {}
+    recent_weeks = temporal.get("recent_weeks")
+    recent_start = temporal.get("recent_start")
 
     total_spend = float(sum(result.total_spend.values()))
     attrib_paid = float(sum(result.total_contribution.values()))
     blended = attrib_paid / total_spend if total_spend > 0 else 0.0
-    top_ch = (
-        max(result.channels, key=lambda c: result.roi[c]) if result.channels else "—"
-    )
-
     prior = _try_prior_yoy_slice(base, result, start, end)
     yoy_rev = yoy_spend = yoy_attrib = yoy_roas = None
     c_rev = c_spend = c_attr = c_roas = "dimmed"
@@ -464,17 +459,27 @@ def _build_kpi_grid(
         spacing="md",
         children=[
             kpi_card(
-                label="Model R²",
+                label="In-sample R²",
                 value=f"{result.r2:.2f}",
                 icon="tabler:chart-dots",
-                helper="Explained variance on weekly revenue",
+                helper="Explained variance on fitted weekly revenue",
                 sub=f"Parameter 94% HDI [{lo:.2f}, {hi:.2f}]",
             ),
             kpi_card(
-                label="MAPE",
+                label="In-sample MAPE",
                 value=f"{result.mape*100:.1f}%",
                 icon="tabler:target",
-                helper="Mean absolute percent error",
+                helper="Mean absolute percent error on fitted period",
+            ),
+            kpi_card(
+                label="Recent-window MAPE",
+                value=_fmt_pct_opt(temporal.get("recent_mape")),
+                icon="tabler:calendar-stats",
+                helper=(
+                    f"Last {recent_weeks} weeks from {recent_start}"
+                    if recent_weeks and recent_start
+                    else "Recent time block not available"
+                ),
             ),
             kpi_card(
                 label="Total revenue (observed)",
@@ -483,12 +488,6 @@ def _build_kpi_grid(
                 helper=f"Paid-media share of observed {paid_share*100:.1f}%",
                 yoy=yoy_rev,
                 yoy_color=c_rev,
-            ),
-            kpi_card(
-                label="Weeks in view",
-                value=str(result.n_weeks),
-                icon="tabler:calendar",
-                helper=date_range,
             ),
             kpi_card(
                 label="Total media spend",
@@ -515,17 +514,17 @@ def _build_kpi_grid(
                 yoy_color=c_roas,
             ),
             kpi_card(
-                label="Top channel (ROAS)",
-                value=top_ch,
-                icon="tabler:crown",
-                helper="Highest window ROAS in selection",
+                label="Weeks in view",
+                value=str(result.n_weeks),
+                icon="tabler:calendar",
+                helper=date_range,
             ),
         ],
     )
 
 
 def build_overview_toolbar(result: ModelResult) -> dmc.Box:
-    """Mounted once in the app shell so preset/clip IDs always exist for callbacks."""
+    """Mounted once in the app shell so preset IDs always exist for callbacks."""
     dmin, dmax = _bounds(result)
     year_options = [
         {"value": str(y), "label": str(y)} for y in range(dmin.year, dmax.year + 1)
@@ -542,59 +541,44 @@ def build_overview_toolbar(result: ModelResult) -> dmc.Box:
             gap="lg",
             align="flex-end",
             wrap="wrap",
-            justify="space-between",
             children=[
-                dmc.Group(
-                    gap="lg",
-                    align="flex-end",
-                    wrap="wrap",
+                dmc.Stack(
+                    gap=6,
                     children=[
-                        dmc.Stack(
-                            gap=6,
-                            children=[
-                                dmc.Text(
-                                    "Analysis window",
-                                    size="xs",
-                                    c="dimmed",
-                                    tt="uppercase",
-                                    fw=600,
-                                ),
-                                dmc.SegmentedControl(
-                                    id=OVERVIEW_RANGE_PRESET,
-                                    value="full",
-                                    data=[
-                                        {"value": "full", "label": "Full period"},
-                                        {"value": "l12m", "label": "Last 12 mo"},
-                                        {"value": "l6m", "label": "Last 6 mo"},
-                                        {"value": "year", "label": "Year"},
-                                    ],
-                                    size="sm",
-                                    color="teal",
-                                    persistence=True,
-                                    persistence_type="session",
-                                ),
-                            ],
+                        dmc.Text(
+                            "Analysis window",
+                            size="xs",
+                            c="dimmed",
+                            tt="uppercase",
+                            fw=600,
                         ),
-                        dmc.Select(
-                            id=OVERVIEW_YEAR_SELECT,
-                            data=year_options,
-                            value=default_year,
-                            w=140,
+                        dmc.SegmentedControl(
+                            id=OVERVIEW_RANGE_PRESET,
+                            value="full",
+                            data=[
+                                {"value": "full", "label": "Full period"},
+                                {"value": "l12m", "label": "Last 12 mo"},
+                                {"value": "l6m", "label": "Last 6 mo"},
+                                {"value": "year", "label": "Year"},
+                            ],
                             size="sm",
-                            label="Calendar year",
-                            style={"display": "none"},
-                            clearable=False,
+                            color="teal",
                             persistence=True,
                             persistence_type="session",
                         ),
                     ],
                 ),
-                dmc.Switch(
-                    id=ACTUAL_PREDICTED_CLIP_ID,
-                    label="Clip y-axis",
+                dmc.Select(
+                    id=OVERVIEW_YEAR_SELECT,
+                    data=year_options,
+                    value=default_year,
+                    w=140,
                     size="sm",
-                    checked=False,
-                    color="teal",
+                    label="Calendar year",
+                    style={"display": "none"},
+                    clearable=False,
+                    persistence=True,
+                    persistence_type="session",
                 ),
             ],
         ),
@@ -712,8 +696,8 @@ def build_overview(result: ModelResult) -> dmc.Stack:
         children=[
             page_header(
                 "Model Overview",
-                "All geographic markets aggregated · weekly media-mix model with "
-                f"{len(result.channels)} paid channels.",
+                f"{result.geo} · weekly media-mix model with {len(result.channels)} "
+                "paid channels.",
             ),
             dmc.Box(
                 id=OVERVIEW_KPI_GRID_ID,
@@ -773,10 +757,9 @@ def register_overview_callbacks(app, results_by_geo: dict[str, ModelResult]) -> 
         Output(OVERVIEW_RESIDUALS_ID, "figure"),
         Input("url", "pathname"),
         Input(OVERVIEW_DATE_STORE, "data"),
-        Input(ACTUAL_PREDICTED_CLIP_ID, "checked"),
         Input(MODEL_REFRESH_STORE, "data"),
     )
-    def _update_overview(pathname, data, clip_y, _refresh):
+    def _update_overview(pathname, data, _refresh):
         pathname = pathname or "/"
         if pathname not in ("/", ""):
             raise PreventUpdate
@@ -798,7 +781,7 @@ def register_overview_callbacks(app, results_by_geo: dict[str, ModelResult]) -> 
             start, end = end, start
 
         sliced = slice_model_result(base, start, end)
-        fig_pred = actual_vs_predicted_chart(sliced, clip_y=bool(clip_y))
+        fig_pred = actual_vs_predicted_chart(sliced)
         kpis = _build_kpi_grid(sliced, base, start, end)
         fig_wf = revenue_waterfall(sliced)
         fig_res = residuals_diagnostic_figure(sliced)

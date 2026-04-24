@@ -4,19 +4,28 @@ from __future__ import annotations
 
 import dash_mantine_components as dmc
 import plotly.graph_objects as go
-from dash import ALL, Input, Output, State, dcc
+from dash import ALL, Input, Output, State, dcc, no_update
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
 from components import CHANNEL_COLORS, apply_dark_theme, kpi_card, page_header, section
 from components.ids import MODEL_REFRESH_STORE
-from model.mmm import ModelResult, optimise_budget, recommended_weekly_allocation
+from model.mmm import (
+    ModelResult,
+    current_weekly_allocation,
+    optimise_budget,
+    recommended_weekly_allocation,
+    steady_state_current_budget_prediction,
+)
 
 SLIDER_ID = {"type": "budget-slider", "channel": ""}
 WEIGHT_LABEL_ID = {"type": "weight-label", "channel": ""}
 ALLOC_LABEL_ID = {"type": "alloc-label", "channel": ""}
 RESET_BUTTON_ID = "budget-reset"
 APPLY_MODEL_MIX_ID = "budget-apply-model-mix"
+CONSTRAINT_MIN_ID = {"type": "budget-min-spend", "channel": ""}
+CONSTRAINT_MAX_ID = {"type": "budget-max-spend", "channel": ""}
+OPTIMISER_STATUS_ID = "budget-optimiser-status"
 PREDICTED_REV_ID = "budget-predicted-revenue"
 UPLIFT_ID = "budget-predicted-uplift"
 UTILISATION_ID = "budget-utilisation"
@@ -37,14 +46,13 @@ def _fmt_currency(v: float) -> str:
 
 
 def _current_weekly_alloc(result: ModelResult) -> dict[str, float]:
-    return {c: float(result.spend[c].mean()) for c in result.channels}
+    return current_weekly_allocation(result)
 
 
 def _allocation_donut(
     channels: list[str], alloc: dict[str, float], *, title: str
 ) -> go.Figure:
     values = [max(0.0, float(alloc.get(c, 0.0))) for c in channels]
-    total = sum(values) or 1.0
     fig = go.Figure(
         data=[
             go.Pie(
@@ -80,6 +88,29 @@ def _weights_from_weekly_alloc(
 def _default_weights(result: ModelResult) -> dict[str, int]:
     alloc = _current_weekly_alloc(result)
     return _weights_from_weekly_alloc(result.channels, alloc)
+
+
+def _constraint_dict(
+    channels: list[str],
+    values: list[float | int | None] | None,
+) -> dict[str, float]:
+    """Map optional NumberInput values to per-channel weekly spend constraints."""
+    if not values:
+        return {}
+    out: dict[str, float] = {}
+    for i, channel in enumerate(channels):
+        if i >= len(values):
+            break
+        value = values[i]
+        if value is None:
+            continue
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            continue
+        if numeric >= 0:
+            out[channel] = numeric
+    return out
 
 
 def _channel_row(channel: str, weight: int, weekly_amount: float) -> dmc.Stack:
@@ -133,6 +164,79 @@ def _channel_row(channel: str, weight: int, weekly_amount: float) -> dmc.Stack:
                 marks=[{"value": v, "label": ""} for v in (0, 25, 50, 75, 100)],
                 size="md",
                 radius="xl",
+            ),
+        ],
+    )
+
+
+def _constraint_row(channel: str, current_weekly: float) -> dmc.TableTr:
+    return dmc.TableTr(
+        [
+            dmc.TableTd(
+                dmc.Group(
+                    gap="sm",
+                    children=[
+                        dmc.Box(
+                            w=10,
+                            h=10,
+                            bg=CHANNEL_COLORS[channel],
+                            style={"borderRadius": "2px"},
+                        ),
+                        dmc.Text(channel, fw=500, size="sm"),
+                    ],
+                )
+            ),
+            dmc.TableTd(
+                dmc.Text(
+                    _fmt_currency(current_weekly) + " / week",
+                    size="sm",
+                    className="mmm-numeric",
+                )
+            ),
+            dmc.TableTd(
+                dmc.NumberInput(
+                    id={**CONSTRAINT_MIN_ID, "channel": channel},
+                    value=None,
+                    min=0,
+                    step=1000,
+                    placeholder="No min",
+                    size="xs",
+                )
+            ),
+            dmc.TableTd(
+                dmc.NumberInput(
+                    id={**CONSTRAINT_MAX_ID, "channel": channel},
+                    value=None,
+                    min=0,
+                    step=1000,
+                    placeholder="No max",
+                    size="xs",
+                )
+            ),
+        ]
+    )
+
+
+def _constraints_table(result: ModelResult) -> dmc.Table:
+    current_alloc = _current_weekly_alloc(result)
+    return dmc.Table(
+        striped=True,
+        highlightOnHover=True,
+        withTableBorder=False,
+        verticalSpacing="xs",
+        children=[
+            dmc.TableThead(
+                dmc.TableTr(
+                    [
+                        dmc.TableTh("Channel"),
+                        dmc.TableTh("Current"),
+                        dmc.TableTh("Min weekly spend"),
+                        dmc.TableTh("Max weekly spend"),
+                    ]
+                )
+            ),
+            dmc.TableTbody(
+                [_constraint_row(c, current_alloc[c]) for c in result.channels]
             ),
         ],
     )
@@ -247,7 +351,7 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     weights = _default_weights(result)
     sliders = [_channel_row(c, weights[c], current_alloc[c]) for c in result.channels]
 
-    current_pred = optimise_budget(result, current_alloc)
+    current_pred = steady_state_current_budget_prediction(result)
     roi_rows = _roi_rows(
         result.channels, current_alloc, current_alloc, current_pred, current_pred, result.n_weeks
     )
@@ -383,16 +487,6 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
                             gap="xs",
                             children=[
                                 dmc.Button(
-                                    "Apply model-suggested mix",
-                                    id=APPLY_MODEL_MIX_ID,
-                                    leftSection=DashIconify(
-                                        icon="tabler:sparkles", width=14
-                                    ),
-                                    variant="subtle",
-                                    color="teal",
-                                    size="xs",
-                                ),
-                                dmc.Button(
                                     "Reset to current mix",
                                     id=RESET_BUTTON_ID,
                                     leftSection=DashIconify(
@@ -410,14 +504,42 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
         ),
     )
 
+    constraints = section(
+        "Optimisation constraints",
+        "Optional weekly min/max spend bounds used when re-running the model-suggested mix.",
+        dmc.Stack(
+            gap="sm",
+            children=[
+                _constraints_table(result),
+                dmc.Group(
+                    justify="space-between",
+                    align="center",
+                    children=[
+                        dmc.Box(id=OPTIMISER_STATUS_ID),
+                        dmc.Button(
+                            "Re-run optimisation",
+                            id=APPLY_MODEL_MIX_ID,
+                            leftSection=DashIconify(
+                                icon="tabler:sparkles", width=14
+                            ),
+                            color="teal",
+                            variant="light",
+                            size="xs",
+                        ),
+                    ],
+                ),
+            ],
+        ),
+    )
+
     recommended_alloc = recommended_weekly_allocation(result)
     rec_pred = optimise_budget(result, recommended_alloc)
     rec_rev = float(rec_pred["total_revenue"])
 
     alloc_charts = section(
         "Allocation mix",
-        "Current weekly mix (from data), your proposed mix (sliders), and a model-suggested mix "
-        f"(steady-state SLSQP maximising predicted revenue — {_fmt_currency(rec_rev)} at suggested mix).",
+        "Current weekly mix (from data), your proposed mix (sliders), and a model-suggested "
+        f"steady-state mix ({_fmt_currency(rec_rev)} at suggested mix).",
         dmc.Grid(
             gutter="md",
             children=[
@@ -462,8 +584,8 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     )
 
     table = section(
-        "Current vs Optimised",
-        "Per-channel spend, ROI, and revenue delta at the proposed mix.",
+        "Current vs proposed",
+        "Current and proposed scenarios both use steady-state response curves.",
         dmc.Box(id=ROI_TABLE_ID, children=_roi_table(roi_rows)),
     )
 
@@ -478,6 +600,7 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
             title_block,
             kpis_row,
             controls,
+            constraints,
             alloc_charts,
             table,
         ],
@@ -514,7 +637,7 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
 
         new_alloc = {c: weights_pct[i] * total_weekly for i, c in enumerate(channels)}
 
-        current_pred = optimise_budget(result, current_alloc)
+        current_pred = steady_state_current_budget_prediction(result)
         new_pred = optimise_budget(result, new_alloc)
 
         cur_rev = float(current_pred["total_revenue"])
@@ -549,21 +672,48 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
 
     @app.callback(
         Output({**SLIDER_ID, "channel": ALL}, "value"),
+        Output(ALLOC_RECOMMENDED_GRAPH_ID, "figure"),
+        Output(OPTIMISER_STATUS_ID, "children"),
         Input(RESET_BUTTON_ID, "n_clicks"),
         Input(APPLY_MODEL_MIX_ID, "n_clicks"),
         State({**SLIDER_ID, "channel": ALL}, "id"),
+        State({**CONSTRAINT_MIN_ID, "channel": ALL}, "value"),
+        State({**CONSTRAINT_MAX_ID, "channel": ALL}, "value"),
         prevent_initial_call=True,
     )
-    def _preset_sliders(_reset_clicks, _apply_clicks, ids):
+    def _preset_sliders(_reset_clicks, _apply_clicks, ids, min_values, max_values):
         from dash import ctx
 
         if not ctx.triggered_id:
             raise PreventUpdate
 
         result = results_by_geo["All"]
+        channels = [i["channel"] for i in ids]
         if ctx.triggered_id == APPLY_MODEL_MIX_ID:
-            rec = recommended_weekly_allocation(result)
+            min_weekly = _constraint_dict(channels, min_values)
+            max_weekly = _constraint_dict(channels, max_values)
+            try:
+                rec = recommended_weekly_allocation(
+                    result,
+                    min_weekly=min_weekly,
+                    max_weekly=max_weekly,
+                )
+            except (RuntimeError, ValueError) as exc:
+                status = dmc.Text(str(exc), size="xs", c="red")
+                return no_update, no_update, status
             weights = _weights_from_weekly_alloc(result.channels, rec)
+            status = dmc.Text(
+                "Optimisation re-run with current constraints.",
+                size="xs",
+                c="teal",
+            )
+            fig = _allocation_donut(
+                result.channels,
+                rec,
+                title="Model-suggested",
+            )
         else:
             weights = _default_weights(result)
-        return [weights[i["channel"]] for i in ids]
+            status = dmc.Text("Reset to current mix.", size="xs", c="dimmed")
+            fig = no_update
+        return [weights[i["channel"]] for i in ids], fig, status

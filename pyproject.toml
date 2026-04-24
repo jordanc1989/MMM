@@ -1,0 +1,16 @@
+[project]
+name = "mmm"
+version = "0.1.0"
+description = "Marketing Mix Modelling Dashboard in Plotly Dash"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dash>=4.1.0",
+    "dash-iconify>=0.1.2",
+    "dash-mantine-components>=2.6.1",
+    "jax>=0.10.0",
+    "nutpie>=0.16.8",
+    "pymc-marketing>=0.19.3",
+    "scipy>=1.17.1",
+    "xarray>=2026.4.0",
+]

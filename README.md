@@ -1,6 +1,6 @@
 # MMM Dashboard
 
-A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a hierarchical MMM on sample marketing data then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
+A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory, then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
 
 ## Screenshots
 
@@ -19,7 +19,7 @@ A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media M
 
 The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** (Hamiltonian Monte Carlo) and posteriors are summarised with [ArviZ](https://python.arviz.org/).
 
-**Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data for demo purposes.
+**Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data; the app automatically selects the largest territory by revenue (`Geo36` in the bundled file) and models that one territory only.
 
 **Caching:** Fitted inference data is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache. This saves quite a lot of time and was implemented for Streamlit-like behaviour.
 
@@ -27,10 +27,10 @@ The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a mult
 
 | Route | Purpose |
 |--------|---------|
-| **Overview** | KPIs, fit diagnostics, revenue vs. baseline/media decomp over time |
+| **Overview** | In-sample KPIs, recent-window diagnostics, revenue vs. baseline/media decomp over time |
 | **Contributions** | Channel contribution to revenue (posterior uncertainty) |
 | **Response curves** | Marginal response / saturation curves by channel |
-| **Optimiser** | Budget scenarios and recommended channel allocation derived from the fitted model |
+| **Optimiser** | Steady-state budget scenarios with optional channel min/max constraints |
 
 The header **Options** panel lets you adjust sampler settings like draws, tuning steps and target accept (with more to be added in the future) and trigger a **refit**. Successful runs persist settings to `data/mmm_sampler_config.json`.
 

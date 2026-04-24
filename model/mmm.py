@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
-import shutil
-import subprocess
-import sys
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,41 +30,10 @@ from pathlib import Path
 import arviz as az
 import numpy as np
 import pandas as pd
-import xarray as xr
 
 from data.loader import CHANNELS, CONTROLS, TREND_COLUMNS
 
 from .sampling_progress import SamplingProgressTracker
-
-# --- pytensor / macOS SDK preflight --------------------------------------
-# pymc-marketing -> pymc -> pytensor JIT-compiles C++; clang needs SDKROOT on
-# recent macOS to find <vector> et al.  Setting it here (before pytensor is
-# imported) keeps the rest of the app ignorant of this detail.
-if sys.platform == "darwin" and "SDKROOT" not in os.environ:
-    try:
-        sdk = subprocess.check_output(
-            ["xcrun", "--show-sdk-path"], text=True, timeout=5
-        ).strip()
-        if sdk:
-            os.environ["SDKROOT"] = sdk
-    except (OSError, subprocess.SubprocessError):
-        pass
-
-_COMPILEDIR = Path(__file__).resolve().parent.parent / ".pytensor_cache"
-_COMPILEDIR.mkdir(exist_ok=True)
-_existing = os.environ.get("PYTENSOR_FLAGS", "")
-if "base_compiledir" not in _existing:
-    os.environ["PYTENSOR_FLAGS"] = (
-        f"{_existing},base_compiledir={_COMPILEDIR}".lstrip(",")
-    )
-
-# macOS: clang++ often fails on `#include <vector>` (SDK / toolchain mismatch). Disabling
-# PyTensor's C++ compiler forces pure NumPy/C fallbacks; pair with nutpie for NUTS.
-# Set PYTENSOR_CXX to a working compiler path to re-enable C++ ops instead.
-if sys.platform == "darwin":
-    import pytensor
-
-    pytensor.config.cxx = os.environ.get("PYTENSOR_CXX", "")
 
 from pymc_marketing.mmm import (
     GeometricAdstock,
@@ -85,7 +52,18 @@ FOURIER_N_ORDER = 3
 
 # ``MODEL_CONFIG_VERSION`` is folded into the idata fingerprint so any change
 # to the prior structure forces a refit of the cached posterior.
-MODEL_CONFIG_VERSION = "v3-gamma-saturation-priors-2026-04"
+MODEL_CONFIG_VERSION = "v4-single-geo-common-channel-priors-2026-04"
+CACHE_FORMAT_VERSION = "compact-v1"
+CACHE_MAX_DRAWS_PER_CHAIN = 500
+CACHE_DROP_GROUPS: tuple[str, ...] = ("warmup_posterior", "warmup_sample_stats")
+CACHE_DROP_POSTERIOR_VARS: tuple[str, ...] = (
+    "fourier_contribution",
+    "adstock_alpha_logodds__",
+    "saturation_lam_log__",
+    "saturation_beta_log__",
+    "y_sigma_log__",
+    "total_media_contribution_original_scale",
+)
 
 IDATA_PATH = Path(__file__).resolve().parent.parent / "data" / "mmm_idata.nc"
 IDATA_FINGERPRINT_PATH = Path(__file__).resolve().parent.parent / "data" / "mmm_idata.sha256"
@@ -96,6 +74,15 @@ DEFAULT_SAMPLER_CONFIG: dict[str, float | int] = {
     "tune": 2000,
     "target_accept": 0.95,
 }
+
+MCMC_SUMMARY_VARS: tuple[str, ...] = (
+    "intercept",
+    "gamma_control",
+    "gamma_fourier",
+    "adstock_alpha",
+    "saturation_lam",
+    "saturation_beta",
+)
 
 
 def load_sampler_config() -> dict[str, float | int]:
@@ -145,7 +132,8 @@ def _idata_fingerprint(
     h.update(b"||")
     h.update("|".join(CONTROL_COLUMNS).encode("utf-8"))
     h.update(
-        f"||{ADSTOCK_L_MAX}||{FOURIER_N_ORDER}||{MODEL_CONFIG_VERSION}".encode("utf-8")
+        f"||{ADSTOCK_L_MAX}||{FOURIER_N_ORDER}||{MODEL_CONFIG_VERSION}"
+        f"||{CACHE_FORMAT_VERSION}".encode("utf-8")
     )
     h.update(
         f"||draws={int(s['draws'])}||tune={int(s['tune'])}||"
@@ -155,6 +143,66 @@ def _idata_fingerprint(
     sub = df[cols].sort_values("time").reset_index(drop=True)
     h.update(pd.util.hash_pandas_object(sub, index=True).values.tobytes())
     return h.hexdigest()
+
+
+def _compact_idata_for_cache(idata):
+    """Return a dashboard-sized InferenceData cache.
+
+    The full PyMC-Marketing idata stores warmup draws, transformed variables, and
+    full-resolution deterministic contribution arrays. The dashboard only needs
+    enough posterior draws for stable HDI bands and the original-scale
+    contribution variables, so the persisted cache can be much smaller than the
+    in-memory fit result.
+    """
+    compact = idata.copy()
+
+    for group in CACHE_DROP_GROUPS:
+        if hasattr(compact, group):
+            delattr(compact, group)
+
+    for group in compact.groups():
+        ds = getattr(compact, group)
+        if "draw" in ds.dims and ds.sizes["draw"] > CACHE_MAX_DRAWS_PER_CHAIN:
+            step = math.ceil(ds.sizes["draw"] / CACHE_MAX_DRAWS_PER_CHAIN)
+            setattr(compact, group, ds.isel(draw=slice(0, None, step)))
+
+    if hasattr(compact, "posterior"):
+        drop_vars = [v for v in CACHE_DROP_POSTERIOR_VARS if v in compact.posterior]
+        if drop_vars:
+            compact.posterior = compact.posterior.drop_vars(drop_vars)
+
+    return compact
+
+
+def _mcmc_var_names(posterior) -> list[str]:
+    """Parameter variables suitable for compact convergence diagnostics."""
+    return [name for name in MCMC_SUMMARY_VARS if name in posterior]
+
+
+def _az_summary_no_degenerate_warnings(idata, var_names: list[str]):
+    """Run ArviZ summary without surfacing expected constant-variable warnings."""
+    if not var_names:
+        return None
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message="invalid value encountered in scalar divide",
+            category=RuntimeWarning,
+            module=r"arviz\.stats\.diagnostics",
+        )
+        return az.summary(idata, var_names=var_names, round_to=4)
+
+
+def _finite_metric(series, reducer: str) -> float | None:
+    vals = pd.to_numeric(series, errors="coerce")
+    vals = vals[np.isfinite(vals)]
+    if vals.empty:
+        return None
+    if reducer == "max":
+        return float(vals.max())
+    if reducer == "min":
+        return float(vals.min())
+    raise ValueError(f"Unsupported reducer: {reducer}")
 
 
 def _log_mcmc_diagnostics(mmm: MMM) -> None:
@@ -177,28 +225,24 @@ def _log_mcmc_diagnostics(mmm: MMM) -> None:
             f"MMM_STRICT_DIAGNOSTICS is set: refusing to continue with {div} divergences"
         )
 
-    post = idata.posterior
-    var_names = [
-        v
-        for v in (
-            "intercept",
-            "adstock_alpha",
-            "saturation_lam",
-            "saturation_beta",
-        )
-        if v in post
-    ]
-    if not var_names:
+    var_names = _mcmc_var_names(idata.posterior)
+    summ = _az_summary_no_degenerate_warnings(idata, var_names)
+    if summ is None:
         return
-    summ = az.summary(idata, var_names=var_names, round_to=4)
     print("[MMM] ArviZ summary (key parameters):\n" + summ.to_string(), flush=True)
-    rhat_max = float(summ["r_hat"].max())
-    ess_bulk_min = float(summ["ess_bulk"].min()) if "ess_bulk" in summ.columns else float("nan")
+    rhat_max = _finite_metric(summ["r_hat"], "max")
+    ess_bulk_min = (
+        _finite_metric(summ["ess_bulk"], "min")
+        if "ess_bulk" in summ.columns
+        else None
+    )
+    rhat_text = f"{rhat_max:.4f}" if rhat_max is not None else "n/a"
+    ess_text = f"{ess_bulk_min:.1f}" if ess_bulk_min is not None else "n/a"
     print(
-        f"[MMM] max r_hat={rhat_max:.4f}, min ess_bulk={ess_bulk_min:.1f}",
+        f"[MMM] max r_hat={rhat_text}, min ess_bulk={ess_text}",
         flush=True,
     )
-    if rhat_max > 1.01:
+    if rhat_max is not None and rhat_max > 1.01:
         warnings.warn(
             f"max r_hat {rhat_max:.4f} exceeds 1.01; chains may not have mixed.",
             UserWarning,
@@ -223,11 +267,16 @@ def mcmc_diagnostics_bundle(idata) -> dict[str, float | int | list | None]:
     except (KeyError, AttributeError, TypeError):
         out["divergences"] = None
     try:
-        post_vars = [str(v) for v in idata.posterior.data_vars.keys()]
-        summ = az.summary(idata, var_names=post_vars, round_to=4)
-        out["max_r_hat"] = float(summ["r_hat"].max())
-        out["min_ess_bulk"] = float(summ["ess_bulk"].min())
-        out["min_ess_tail"] = float(summ["ess_tail"].min())
+        post_vars = _mcmc_var_names(idata.posterior)
+        summ = _az_summary_no_degenerate_warnings(idata, post_vars)
+        if summ is None:
+            out["max_r_hat"] = None
+            out["min_ess_bulk"] = None
+            out["min_ess_tail"] = None
+        else:
+            out["max_r_hat"] = _finite_metric(summ["r_hat"], "max")
+            out["min_ess_bulk"] = _finite_metric(summ["ess_bulk"], "min")
+            out["min_ess_tail"] = _finite_metric(summ["ess_tail"], "min")
     except Exception:  # noqa: BLE001
         out["max_r_hat"] = None
         out["min_ess_bulk"] = None
@@ -288,6 +337,7 @@ class ModelResult:
     r2: float
     mape: float
     r2_hdi: tuple[float, float]
+    temporal_validation: dict[str, float | int | str | None] | None = None
 
     # 94% HDI (low, high) bands per channel contribution time series
     contribution_hdi: dict[str, tuple[np.ndarray, np.ndarray]] = field(
@@ -353,6 +403,78 @@ def _mape(y: np.ndarray, yhat: np.ndarray) -> float:
     return float(np.mean(np.abs((y[mask] - yhat[mask]) / y[mask])))
 
 
+def temporal_validation_metrics(
+    result: ModelResult,
+    *,
+    recent_fraction: float = 0.2,
+) -> dict[str, float | int | str | None]:
+    """Score the most recent time block separately from the full-period fit.
+
+    This is a lightweight temporal validation panel for the dashboard. It does
+    not refit a second train-only MMM; it prevents the main KPIs from hiding
+    recent-period fit quality behind a full-period average.
+    """
+    n = result.n_weeks
+    if n == 0:
+        return {
+            "recent_weeks": 0,
+            "recent_start": None,
+            "recent_r2": None,
+            "recent_mape": None,
+        }
+    frac = min(0.5, max(0.05, float(recent_fraction)))
+    n_recent = min(n, max(1, int(round(n * frac))))
+    start_idx = n - n_recent
+    revenue = np.asarray(result.revenue, dtype=float)[start_idx:]
+    fitted = np.asarray(result.fitted, dtype=float)[start_idx:]
+    recent_start = pd.Timestamp(result.dates[start_idx]).date().isoformat()
+    return {
+        "recent_weeks": int(n_recent),
+        "recent_start": recent_start,
+        "recent_r2": _r2(revenue, fitted),
+        "recent_mape": _mape(revenue, fitted),
+    }
+
+
+def current_budget_prediction(
+    result: ModelResult,
+) -> dict[str, float | dict[str, float]]:
+    """Current scenario from fitted history, not steady-state approximation."""
+    per_channel = {
+        c: float(result.contributions[c].sum()) for c in result.channels
+    }
+    spend = result.total_spend
+    weeks = result.n_weeks
+    roi = {
+        c: (per_channel[c] / spend[c]) if spend[c] > 0 else 0.0
+        for c in result.channels
+    }
+    return {
+        "total_revenue": float(result.fitted.sum()),
+        "baseline_revenue": float(result.baseline.sum()),
+        "channel_contribution": per_channel,
+        "channel_roi": roi,
+        "weekly_allocation": {
+            c: (spend[c] / weeks) if weeks > 0 else 0.0 for c in result.channels
+        },
+    }
+
+
+def current_weekly_allocation(result: ModelResult) -> dict[str, float]:
+    """Observed average weekly spend by channel over the selected window."""
+    return {
+        c: (float(result.spend[c].sum()) / result.n_weeks) if result.n_weeks > 0 else 0.0
+        for c in result.channels
+    }
+
+
+def steady_state_current_budget_prediction(
+    result: ModelResult,
+) -> dict[str, float | dict[str, float]]:
+    """Current scenario evaluated with the same steady-state logic as proposals."""
+    return optimise_budget(result, current_weekly_allocation(result))
+
+
 def _hdi(samples: np.ndarray, prob: float = 0.94) -> tuple[float, float]:
     """Simple empirical highest-density-interval."""
     s = np.sort(np.asarray(samples).ravel())
@@ -395,10 +517,9 @@ def _channel_hdi_bands(
 def _informed_model_config(df: pd.DataFrame) -> dict:
     """Build a ``model_config`` with priors calibrated to the training data.
 
-    * ``saturation_beta`` uses ``Gamma(alpha=3, beta=3/beta_mean)`` per channel.
-      The prior mean is still anchored to each channel's share of total spend
-      (high-spend channels get a wider prior), but the mode is at
-      ``2·beta_mean/3`` (strictly positive rather than zero).
+    * ``saturation_beta`` uses the same weakly informative prior for every
+      channel. This avoids baking spend share into attribution before the model
+      sees the response data.
     * ``saturation_lam`` is tightened from ``Gamma(3, 1)`` (mean 3, heavy
       left tail) to ``Gamma(4, 2)`` (mean 2, mode 1.5) to concentrate
       diminishing-returns curvature in the identifiable region.
@@ -408,24 +529,6 @@ def _informed_model_config(df: pd.DataFrame) -> dict:
       the decay parameter no longer pushed toward 0 by the default
       ``Beta(1, 3)`` whose mean is 0.25.
     """
-    spend_totals = np.array(
-        [float(df[col].sum()) for col in CHANNEL_COLUMNS], dtype=float
-    )
-    total = spend_totals.sum()
-    if total <= 0:
-        spend_shares = np.full(len(CHANNEL_COLUMNS), 1.0 / len(CHANNEL_COLUMNS))
-    else:
-        spend_shares = spend_totals / total
-    # Floor so minor channels still get non-trivial prior mass; ceiling avoids
-    # arbitrarily fat tails for the single dominant channel. Wrap in a
-    # DataArray with explicit ``channel`` dim so ``pymc_extras.Prior`` does
-    # not emit an implicit-conversion warning.
-    beta_mean = xr.DataArray(
-        np.clip(spend_shares, 0.05, 0.5),
-        dims=("channel",),
-        coords={"channel": list(CHANNEL_COLUMNS)},
-    )
-
     return {
         "intercept": Prior("Normal", mu=0.35, sigma=0.15, dims=()),
         "likelihood": Prior(
@@ -437,9 +540,7 @@ def _informed_model_config(df: pd.DataFrame) -> dict:
         "gamma_fourier": Prior("Laplace", mu=0.0, b=0.05, dims="fourier_mode"),
         "adstock_alpha": Prior("Beta", alpha=3.0, beta=3.0, dims="channel"),
         "saturation_lam": Prior("Gamma", alpha=4.0, beta=2.0, dims="channel"),
-        "saturation_beta": Prior(
-            "Gamma", alpha=3.0, beta=3.0 / beta_mean, dims="channel"
-        ),
+        "saturation_beta": Prior("Gamma", alpha=3.0, beta=15.0, dims="channel"),
     }
 
 
@@ -484,10 +585,22 @@ def _fit_mmm(
         progress.reset(
             chains=chains, tune=tune, draws=draws, indeterminate=True
         )
-    mmm.fit(X, y, **fit_kw)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Skipping Check\{0 < alpha <= 1\} Op.*",
+            category=UserWarning,
+        )
+        mmm.fit(X, y, **fit_kw)
     if progress is not None:
         progress.set_phase("ppc")
-    mmm.sample_posterior_predictive(X, extend_idata=True, progressbar=True)
+    with warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=r"Skipping Check\{0 < alpha <= 1\} Op.*",
+            category=UserWarning,
+        )
+        mmm.sample_posterior_predictive(X, extend_idata=True, progressbar=True)
     if progress is not None:
         progress.set_phase("idle")
     _log_mcmc_diagnostics(mmm)
@@ -521,14 +634,11 @@ def _load_or_fit(
     if cache_ok:
         try:
             return MMM.load(str(IDATA_PATH))
-        except Exception:  # noqa: BLE001
+        except Exception:
             _invalidate_idata_cache()
     elif IDATA_PATH.exists() and not cache_ok:
         # Stale or legacy cache (missing/wrong fingerprint).
-        print(
-            "[MMM] Inference cache miss (data or model spec changed); refitting...",
-            flush=True,
-        )
+        print("[MMM] Cached posterior is stale; refitting once to refresh it...", flush=True)
         _invalidate_idata_cache()
 
     print(
@@ -538,9 +648,10 @@ def _load_or_fit(
     mmm = _fit_mmm(df, sampler, progress=progress)
     try:
         IDATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+        mmm.idata = _compact_idata_for_cache(mmm.idata)
         mmm.save(str(IDATA_PATH))
         IDATA_FINGERPRINT_PATH.write_text(fp + "\n", encoding="utf-8")
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"(warning) failed to cache InferenceData: {exc}", flush=True)
     _reset_mmm_cache()
     return mmm
@@ -750,7 +861,7 @@ def _build_result(
             f"ADSTOCK_L_MAX in model/mmm.py."
         )
 
-    return ModelResult(
+    result = ModelResult(
         geo=geo_label,
         channels=list(CHANNELS),
         dates=dates,
@@ -779,6 +890,8 @@ def _build_result(
         adstock_l_max=ADSTOCK_L_MAX,
         half_life_truncation_warning=trunc_note,
     )
+    result.temporal_validation = temporal_validation_metrics(result)
+    return result
 
 
 def fit_surrogate(
@@ -816,7 +929,7 @@ def _steady_state_contribution(
 
     Geometric adstock with `normalize=True` converges to the input itself at
     steady state (the normalised kernel sums to 1), so we skip the adstock
-    roll-up here. Saturation/beta live in scaled space; multiply by
+    roll-up here. Saturation/beta live in scaled space, multiply by
     `target_scale` to come back to currency units.
     """
     x_scaled = np.asarray(weekly_spend, dtype=float) / max(channel_scale, 1e-12)
@@ -930,7 +1043,7 @@ def _cached_mmm() -> MMM | None:
     if _MMM_CACHE is None and IDATA_PATH.exists():
         try:
             _MMM_CACHE = MMM.load(str(IDATA_PATH))
-        except Exception:  # noqa: BLE001
+        except Exception:
             _MMM_CACHE = None
     return _MMM_CACHE
 
@@ -985,7 +1098,7 @@ def slice_model_result(
 
     ic0 = float(intercept_contribution[0]) if len(intercept_contribution) else result.intercept
 
-    return ModelResult(
+    sliced_result = ModelResult(
         geo=result.geo,
         channels=result.channels,
         dates=dates_out,
@@ -1014,6 +1127,8 @@ def slice_model_result(
         adstock_l_max=result.adstock_l_max,
         half_life_truncation_warning=result.half_life_truncation_warning,
     )
+    sliced_result.temporal_validation = temporal_validation_metrics(sliced_result)
+    return sliced_result
 
 
 def posterior_predictive_interval_df(result: ModelResult) -> pd.DataFrame | None:
@@ -1022,7 +1137,7 @@ def posterior_predictive_interval_df(result: ModelResult) -> pd.DataFrame | None
     Bypasses ``mmm.summary.posterior_predictive``: in the single-geo multidimensional
     model path, pymc-marketing stores ``target_scale`` with a spurious length-1
     ``target_scale_dim_0`` coordinate that leaks into ``custom_dims`` and makes the
-    library's internal merge with ``observed`` raise ``KeyError``. We compute the HDI
+    library's internal merge with ``observed`` raise ``KeyError``. HDI is computed
     directly from ``idata.posterior_predictive["y"]`` using the known scalar
     ``result.target_scale`` to stay in original currency units.
     """
@@ -1143,7 +1258,51 @@ def channel_window_roi_hdi(
     )
 
 
-def recommended_weekly_allocation(result: ModelResult) -> dict[str, float]:
+def _bounded_initial_weights(
+    preferred: np.ndarray,
+    lower: np.ndarray,
+    upper: np.ndarray,
+) -> np.ndarray:
+    """Feasible simplex weights inside lower/upper bounds."""
+    total_lower = float(lower.sum())
+    total_upper = float(upper.sum())
+    if total_lower > 1.0 + 1e-9:
+        raise ValueError("Minimum channel constraints exceed the total weekly budget")
+    if total_upper < 1.0 - 1e-9:
+        raise ValueError("Maximum channel constraints are below the total weekly budget")
+
+    w = lower.astype(float).copy()
+    remaining = max(0.0, 1.0 - float(w.sum()))
+    capacity = np.maximum(upper - w, 0.0)
+    preference = np.maximum(preferred - lower, 0.0)
+
+    for _ in range(len(w) + 2):
+        if remaining <= 1e-10:
+            break
+        active = capacity > 1e-10
+        if not bool(active.any()):
+            break
+        weights = np.where(active, preference, 0.0)
+        if float(weights.sum()) <= 1e-12:
+            weights = np.where(active, capacity, 0.0)
+        add = np.minimum(capacity, remaining * weights / float(weights.sum()))
+        if float(add.sum()) <= 1e-12:
+            break
+        w += add
+        capacity -= add
+        remaining -= float(add.sum())
+
+    if abs(float(w.sum()) - 1.0) > 1e-6:
+        raise ValueError("Could not construct a feasible allocation from constraints")
+    return w / float(w.sum())
+
+
+def recommended_weekly_allocation(
+    result: ModelResult,
+    *,
+    min_weekly: dict[str, float] | None = None,
+    max_weekly: dict[str, float] | None = None,
+) -> dict[str, float]:
     """Approximately optimal weekly mix under steady-state `optimise_budget` (SLSQP).
 
     Optimises only the paid-media contribution (the baseline is constant w.r.t. the
@@ -1156,6 +1315,8 @@ def recommended_weekly_allocation(result: ModelResult) -> dict[str, float]:
     channels = result.channels
     cur = {c: float(np.mean(result.spend[c])) for c in channels}
     total = float(sum(cur.values())) or 1.0
+    min_weekly = min_weekly or {}
+    max_weekly = max_weekly or {}
 
     lam = np.array([float(result.saturation_lam[c]) for c in channels])
     beta = np.array([float(result.betas[c]) for c in channels])
@@ -1177,9 +1338,28 @@ def recommended_weekly_allocation(result: ModelResult) -> dict[str, float]:
         d_contrib_dw = beta * (lam * (1.0 - sat * sat) / 2.0) * (total / scale)
         return -d_contrib_dw
 
-    n = len(channels)
     x0 = np.array([cur[c] / total for c in channels])
-    bounds = [(0.0, 1.0)] * n
+    lower_spend = np.array(
+        [max(0.0, float(min_weekly.get(c, 0.0) or 0.0)) for c in channels]
+    )
+    upper_spend = np.array(
+        [float(max_weekly[c]) if c in max_weekly and max_weekly[c] is not None else total for c in channels]
+    )
+    upper_spend = np.maximum(upper_spend, 0.0)
+    bad = [
+        c
+        for i, c in enumerate(channels)
+        if upper_spend[i] + 1e-9 < lower_spend[i]
+    ]
+    if bad:
+        raise ValueError(
+            "Maximum spend is below minimum spend for: " + ", ".join(bad)
+        )
+
+    lower = lower_spend / total
+    upper = np.minimum(upper_spend / total, 1.0)
+    x0 = _bounded_initial_weights(x0, lower, upper)
+    bounds = list(zip(lower, upper))
     cons = ({"type": "eq", "fun": lambda x: float(np.sum(x)) - 1.0},)
     res = minimize(
         neg_paid,
@@ -1190,6 +1370,8 @@ def recommended_weekly_allocation(result: ModelResult) -> dict[str, float]:
         constraints=cons,
         options={"maxiter": 800, "ftol": 1e-10},
     )
+    if not res.success:
+        raise RuntimeError(f"Budget optimisation failed: {res.message}")
     w = np.maximum(res.x, 0.0)
     s = float(w.sum())
     if s <= 0:
@@ -1214,5 +1396,5 @@ def adstock(x: np.ndarray, decay: float) -> np.ndarray:  # pragma: no cover - co
 
 
 def hill(x: np.ndarray | float, lam: float, _s: float | None = None) -> np.ndarray | float:  # pragma: no cover - compat
-    """Logistic saturation — compatibility alias for old callers."""
+    """Logistic saturation: compatibility alias for old callers."""
     return _logistic_saturation(x, lam)

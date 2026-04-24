@@ -9,7 +9,7 @@ import threading
 
 import dash_mantine_components as dmc
 import pandas as pd
-from dash import Dash, Input, Output, State, _dash_renderer, dcc, html, no_update
+from dash import Dash, Input, Output, State, dcc, html, no_update
 from dash.exceptions import PreventUpdate
 from dash_iconify import DashIconify
 
@@ -27,7 +27,7 @@ from components.ids import (
     REFIT_POLL_INTERVAL,
     REFIT_PROGRESS_CHAINS,
 )
-from data.loader import aggregate_geo, load_meridian
+from data.loader import aggregate_geo, load_meridian, select_demo_geo
 from model.mmm import ModelResult, fit_surrogate, save_sampler_config
 from model.sampling_progress import SamplingProgressTracker
 from pages import (
@@ -68,7 +68,7 @@ def _nav_link(path: str, label: str, icon: str) -> dmc.NavLink:
 
 
 def build_model_cache() -> dict[str, ModelResult]:
-    """Fit (or load from disk cache) the Bayesian MMM on all geographies aggregated.
+    """Fit (or load from disk cache) the Bayesian MMM on one demo geography.
 
     First launch samples with PyMC/NUTS (~60-90s, cached to `data/mmm_idata.nc`).
     Subsequent launches load the cached inference data and are near-instant.
@@ -77,8 +77,12 @@ def build_model_cache() -> dict[str, ModelResult]:
     refit with new settings.
     """
     df = load_meridian()
-    print("Loading MMM (first run ~60-90s while PyMC samples)...", flush=True)
-    result = fit_surrogate(aggregate_geo(df, None), "All")
+    demo_geo = select_demo_geo(df)
+    print(
+        f"Loading MMM for {demo_geo} (first run ~60-90s while PyMC samples)...",
+        flush=True,
+    )
+    result = fit_surrogate(aggregate_geo(df, demo_geo), demo_geo)
     print("MMM ready.", flush=True)
     return {"All": result}
 
@@ -138,7 +142,7 @@ def _header(result: ModelResult) -> dmc.AppShellHeader:
                                     "Meridian Media Mix", fw=700, size="md"
                                 ),
                                 dmc.Text(
-                                    "Bayesian MMM (pymc-marketing) on Meridian simulated data",
+                                    f"Bayesian MMM (pymc-marketing) on {result.geo}",
                                     size="xs",
                                     c="dimmed",
                                 ),
@@ -225,7 +229,7 @@ def _header(result: ModelResult) -> dmc.AppShellHeader:
                             ],
                         ),
                         dmc.Badge(
-                            "All geos",
+                            result.geo,
                             color="gray",
                             variant="light",
                             radius="sm",
@@ -284,7 +288,7 @@ def _navbar() -> dmc.AppShellNavbar:
                 ),
                 dmc.Text(
                     "Bayesian MMM (pymc-marketing) with geometric adstock, logistic "
-                    "saturation, yearly Fourier seasonality, and a linear trend. "
+                    "saturation, yearly Fourier seasonality, and controls. "
                     "Fit with PyMC/NUTS, posterior cached to disk.",
                     size="xs",
                     c="dimmed",
@@ -644,14 +648,16 @@ def _register_shell_callbacks(app: Dash, results_by_geo: dict[str, ModelResult])
                 raise PreventUpdate
         save_sampler_config(cfg)
         print("Refitting MMM with sampler config:", cfg, flush=True)
-        df = aggregate_geo(load_meridian(), None)
+        raw_df = load_meridian()
+        demo_geo = select_demo_geo(raw_df)
+        df = aggregate_geo(raw_df, demo_geo)
         tracker = SamplingProgressTracker()
         err_box: list[BaseException | None] = [None]
 
         def work() -> None:
             try:
                 results_by_geo["All"] = fit_surrogate(
-                    df, "All", cfg, progress=tracker
+                    df, demo_geo, cfg, progress=tracker
                 )
             except Exception as exc:
                 err_box[0] = exc

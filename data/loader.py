@@ -49,6 +49,21 @@ signal.
 """
 
 
+def select_demo_geo(df: pd.DataFrame) -> str:
+    """Return the single largest territory by total revenue.
+
+    Meridian's simulated geos are anonymised (`Geo0`, `Geo1`, ...), so the demo
+    uses the highest-revenue geo as a stable, easy-to-explain single market.
+    """
+    if "revenue" not in df.columns:
+        df = df.copy()
+        df["revenue"] = df["conversions"] * df["revenue_per_conversion"]
+    totals = df.groupby("geo")["revenue"].sum().sort_values(ascending=False)
+    if totals.empty:
+        raise ValueError("Cannot select a demo geo from an empty dataframe")
+    return str(totals.index[0])
+
+
 def _download_if_missing() -> None:
     if CSV_PATH.exists():
         return
@@ -87,8 +102,9 @@ def load_meridian() -> pd.DataFrame:
 def aggregate_geo(df: pd.DataFrame, geo: str | None) -> pd.DataFrame:
     """Slice the dataframe to a geo, or aggregate across all geos.
 
-    Aggregation sums spend, impressions, conversions, and revenue across geos
-    while taking spend-weighted means of control variables.
+    The dashboard now calls this with one selected geo. The aggregate path is
+    retained for ad-hoc exploration and sums spend, impressions, conversions,
+    and revenue across geos while averaging rate-like controls.
     """
     if geo and geo != "All":
         out = df[df["geo"] == geo].sort_values("time").reset_index(drop=True)
