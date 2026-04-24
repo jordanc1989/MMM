@@ -1,6 +1,6 @@
 # MMM Dashboard
 
-A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory, then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
+A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory (from the Google Meridian simulated dataset), then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
 
 ## Screenshots
 
@@ -17,11 +17,11 @@ A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media M
 
 ## What it does
 
-The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** (Hamiltonian Monte Carlo) and posteriors are summarised with [ArviZ](https://python.arviz.org/).
+The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** (isn't it always?) and posteriors are summarised with [ArviZ](https://python.arviz.org/).
 
 **Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data; the app automatically selects the largest territory by revenue (`Geo36` in the bundled file) and models that one territory only.
 
-**Caching:** Fitted inference data is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache. This saves quite a lot of time and was implemented for Streamlit-like behaviour.
+**Caching:** Fitted inference data is written to `data/mmm_idata.nc` (& a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache, to save on (re)loading time.
 
 ## Pages
 
@@ -56,7 +56,7 @@ Open **http://127.0.0.1:8050**. The first model fit can take around a minute or 
 
 ## macOS note
 
-PyMC/PyTensor may need a working C++ toolchain or fall back to pure NumPy modes. The project sets a local PyTensor compile dir and, on Apple systems, can disable the C++ compiler unless `PYTENSOR_CXX` points to a working compiler. If sampling fails, check PyMC/PyTensor docs for your OS version.
+PyMC/PyTensor may need a working C++ toolchain or fall back to pure NumPy modes. The project sets a local PyTensor compile dir and, on Apple systems, can disable the C++ compiler unless `PYTENSOR_CXX` points to a working compiler. If sampling fails, check PyMC/PyTensor docs for your OS version. I'll likely add a fix in the future if it doesn't get fixed.
 
 ## Disclaimer
 
