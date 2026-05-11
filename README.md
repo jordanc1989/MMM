@@ -1,5 +1,11 @@
 # MMM Dashboard
 
+[![Python](https://img.shields.io/badge/Python-3.13%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![Dash](https://img.shields.io/badge/Dash-4.x-008DE4?logo=plotly&logoColor=white)](https://dash.plotly.com/)
+[![PyMC-Marketing](https://img.shields.io/badge/PyMC--Marketing-0.19%2B-1F77B4)](https://www.pymc-marketing.io/)
+[![uv](https://img.shields.io/badge/package%20manager-uv-DE5FE9)](https://github.com/astral-sh/uv)
+[![Demo](https://img.shields.io/badge/data-simulated-lightgrey)](https://github.com/google/meridian)
+
 A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory (from the Google Meridian simulated dataset), then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
 
 ## Screenshots
