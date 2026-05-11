@@ -27,6 +27,7 @@ from components.ids import (
     REFIT_POLL_INTERVAL,
     REFIT_PROGRESS_CHAINS,
 )
+from dashboard.theme import mantine_theme
 from data.loader import aggregate_geo, load_meridian, select_demo_geo
 from model.mmm import ModelResult, fit_surrogate, save_sampler_config
 from model.sampling_progress import SamplingProgressTracker
@@ -90,29 +91,6 @@ def build_model_cache() -> dict[str, ModelResult]:
 # ---------- shell ---------------------------------------------------------
 
 
-def _theme() -> dict:
-    return {
-        "primaryColor": "teal",
-        "fontFamily": "DM Sans, sans-serif",
-        "headings": {"fontFamily": "DM Sans, sans-serif", "fontWeight": "600"},
-        "defaultRadius": "md",
-        "colors": {
-            "dark": [
-                "#d4d6d9",
-                "#b1b4ba",
-                "#8a8f97",
-                "#62666d",
-                "#3a3f47",
-                "#2a2f36",
-                "#23272e",
-                "#181c21",
-                "#13161a",
-                "#0b0d10",
-            ],
-        },
-    }
-
-
 def _header(result: ModelResult) -> dmc.AppShellHeader:
     sc = result.sampler_config or {}
     ta = float(sc.get("target_accept", 0.99))
@@ -139,10 +117,10 @@ def _header(result: ModelResult) -> dmc.AppShellHeader:
                             gap=0,
                             children=[
                                 dmc.Text(
-                                    "Meridian Media Mix", fw=700, size="md"
+                                    "Bayesian Media Mix Model", fw=700, size="md"
                                 ),
                                 dmc.Text(
-                                    f"Bayesian MMM (pymc-marketing) on {result.geo}",
+                                    f"{result.geo}, weekly simulated Meridian data",
                                     size="xs",
                                     c="dimmed",
                                 ),
@@ -263,35 +241,40 @@ def _overview_date_store(result: ModelResult) -> dcc.Store:
     )
 
 
-def _navbar() -> dmc.AppShellNavbar:
+def _navbar(result: ModelResult) -> dmc.AppShellNavbar:
     return dmc.AppShellNavbar(
         p="md",
         children=dmc.Stack(
             gap="xs",
             children=[
-                dmc.Text(
-                    "Navigate",
-                    size="xs",
-                    c="dimmed",
-                    tt="uppercase",
-                    fw=600,
-                    mb=4,
-                ),
                 *[_nav_link(path, label, icon) for path, label, icon in ROUTES],
                 dmc.Divider(my="md"),
                 dmc.Text(
-                    "About",
+                    "Model",
                     size="xs",
                     c="dimmed",
                     tt="uppercase",
                     fw=600,
                 ),
-                dmc.Text(
-                    "Bayesian MMM (pymc-marketing) with geometric adstock, logistic "
-                    "saturation, yearly Fourier seasonality, and controls. "
-                    "Fit with PyMC/NUTS, posterior cached to disk.",
-                    size="xs",
-                    c="dimmed",
+                dmc.Stack(
+                    gap=2,
+                    children=[
+                        dmc.Text(
+                            result.geo,
+                            size="sm",
+                            fw=600,
+                        ),
+                        dmc.Text(
+                            f"{len(result.channels)} paid channels",
+                            size="xs",
+                            c="dimmed",
+                        ),
+                        dmc.Text(
+                            "Geometric adstock, logistic saturation",
+                            size="xs",
+                            c="dimmed",
+                        ),
+                    ],
                 ),
             ],
         ),
@@ -496,7 +479,7 @@ def create_app() -> Dash:
 
     base_result = results_by_geo["All"]
     app.layout = dmc.MantineProvider(
-        theme=_theme(),
+        theme=mantine_theme(),
         forceColorScheme="dark",
         children=dmc.Box(
             pos="relative",
@@ -520,7 +503,7 @@ def create_app() -> Dash:
                         dcc.Location(id="url", refresh=False),
                         _overview_date_store(base_result),
                         _header(base_result),
-                        _navbar(),
+                        _navbar(base_result),
                         dmc.AppShellMain(
                             dmc.Stack(
                                 gap=0,

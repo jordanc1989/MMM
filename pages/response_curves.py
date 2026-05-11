@@ -9,7 +9,7 @@ from dash import Input, Output, dcc
 
 from components import CHANNEL_COLORS, apply_dark_theme, page_header, section
 from components.ids import MODEL_REFRESH_STORE
-from model.mmm import ModelResult, response_curve
+from model.mmm import ModelResult, observed_spend_support, response_curve
 
 
 CHANNEL_SELECT_ID = "response-curve-channel"
@@ -22,9 +22,34 @@ CHANNEL_STATS_ID = "response-curve-stats"
 
 def response_curve_figure(result: ModelResult, channel: str) -> go.Figure:
     grid, contrib, current, sat_90, hdi_low, hdi_high = response_curve(result, channel)
+    support_p5, support_p95 = observed_spend_support(result, channel)
     color = CHANNEL_COLORS[channel]
 
     fig = go.Figure()
+
+    if len(grid):
+        grid_min = float(grid.min())
+        grid_max = float(grid.max())
+        if support_p5 > grid_min:
+            fig.add_vrect(
+                x0=grid_min,
+                x1=min(support_p5, grid_max),
+                fillcolor="rgba(239, 68, 68, 0.06)",
+                line_width=0,
+                annotation_text="Below observed support",
+                annotation_position="top left",
+                annotation_font=dict(color="#f97316", size=10),
+            )
+        if support_p95 < grid_max:
+            fig.add_vrect(
+                x0=max(support_p95, grid_min),
+                x1=grid_max,
+                fillcolor="rgba(239, 68, 68, 0.06)",
+                line_width=0,
+                annotation_text="Above observed support",
+                annotation_position="top right",
+                annotation_font=dict(color="#f97316", size=10),
+            )
 
     # 94% HDI band first (drawn underneath the mean line).
     fig.add_trace(
@@ -52,6 +77,28 @@ def response_curve_figure(result: ModelResult, channel: str) -> go.Figure:
     )
 
     max_y = float(max(contrib.max(), hdi_high.max())) if len(contrib) else 1.0
+
+    fig.add_vrect(
+        x0=support_p5,
+        x1=support_p95,
+        fillcolor="rgba(45, 212, 191, 0.06)",
+        line_width=0,
+        layer="below",
+    )
+    fig.add_vline(
+        x=support_p5,
+        line=dict(color="#2dd4bf", width=1, dash="dash"),
+        annotation_text="P5 observed",
+        annotation_position="bottom left",
+        annotation_font_color="#2dd4bf",
+    )
+    fig.add_vline(
+        x=support_p95,
+        line=dict(color="#2dd4bf", width=1, dash="dash"),
+        annotation_text="P95 observed",
+        annotation_position="bottom right",
+        annotation_font_color="#2dd4bf",
+    )
 
     fig.add_vline(
         x=current,
@@ -111,19 +158,29 @@ def _fmt_currency(v: float) -> str:
 
 def response_stats(result: ModelResult, channel: str) -> dmc.SimpleGrid:
     grid, contrib, current, sat_90, _lo, _hi = response_curve(result, channel)
+    support_p5, support_p95 = observed_spend_support(result, channel)
     # Interpolate mean posterior curve at the current average weekly spend.
     cur_weekly_rev = float(np.interp(current, grid, contrib)) if len(grid) else 0.0
-    roi_now = cur_weekly_rev / current if current > 0 else 0.0
+    if len(grid) >= 3:
+        idx = int(np.searchsorted(grid, current))
+        idx = int(np.clip(idx, 1, len(grid) - 2))
+        marginal_roas = float(
+            (contrib[idx + 1] - contrib[idx - 1])
+            / (grid[idx + 1] - grid[idx - 1])
+        )
+    else:
+        marginal_roas = 0.0
     headroom = max(0.0, (sat_90 - current) / current) if current > 0 else 0.0
 
     stats = [
         ("Avg weekly spend", _fmt_currency(current)),
         ("Current weekly contribution", _fmt_currency(cur_weekly_rev)),
-        ("Incremental ROAS at avg spend", f"{roi_now:.2f}x"),
+        ("Marginal ROAS at avg spend", f"{marginal_roas:.2f}x"),
+        ("Observed spend range", f"{_fmt_currency(support_p5)}–{_fmt_currency(support_p95)}"),
         ("Headroom to 90% saturation", f"{headroom*100:,.0f}%" if current > 0 else "—"),
     ]
     return dmc.SimpleGrid(
-        cols={"base": 2, "md": 4},
+        cols={"base": 2, "md": 5},
         spacing="md",
         children=[
             dmc.Stack(
@@ -164,8 +221,8 @@ def build_response_curves(result: ModelResult) -> dmc.Stack:
                         checkIconPosition="right",
                     ),
                     dmc.Text(
-                        "Markers: average weekly spend (dotted) and spend where logistic "
-                        "saturation reaches 90% of its asymptote (diminishing-returns region to the right).",
+                        "Markers: average weekly spend, observed P5-P95 support, and spend where "
+                        "logistic saturation reaches 90% of its asymptote.",
                         size="xs",
                         c="dimmed",
                         maw=560,

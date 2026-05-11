@@ -1,0 +1,2 @@
+"""Dashboard-wide configuration helpers."""
+

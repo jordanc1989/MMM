@@ -10,6 +10,7 @@ from dash import Input, Output, dcc
 from dash.exceptions import PreventUpdate
 from plotly.subplots import make_subplots
 
+from data.loader import TREND_COLUMNS
 from components.ids import (
     MODEL_REFRESH_STORE,
     OVERVIEW_DATE_STORE,
@@ -27,6 +28,7 @@ from components import (
 from model.mmm import (
     ModelResult,
     posterior_predictive_interval_for_result,
+    rolling_origin_validation_metrics,
     slice_model_result,
 )
 
@@ -197,7 +199,7 @@ def actual_vs_predicted_chart(result: ModelResult) -> go.Figure:
 
 
 def revenue_waterfall(result: ModelResult) -> go.Figure:
-    """Decompose total revenue into Intercept / Trend / Seasonality / Controls / Channels."""
+    """Decompose total revenue into configured baseline terms and channels."""
     intercept_total = float(result.intercept_contribution.sum())
     trend_total = float(result.trend_contribution.sum())
     seasonality_total = float(result.seasonality_contribution.sum())
@@ -213,28 +215,22 @@ def revenue_waterfall(result: ModelResult) -> go.Figure:
         + sum(channel_totals.values())
     )
 
-    labels = [
-        "Intercept",
-        "Trend",
-        "Seasonality",
-        "Controls",
-        *result.channels,
-        "Predicted Revenue",
-    ]
-    measures = (
-        ["absolute"]
-        + ["relative"] * 3
-        + ["relative"] * len(result.channels)
-        + ["total"]
+    include_trend = bool(TREND_COLUMNS) or abs(trend_total) > 1e-6
+    labels = ["Intercept"]
+    values = [intercept_total]
+    if include_trend:
+        labels.append("Trend")
+        values.append(trend_total)
+    labels.extend(["Seasonality", "Controls", *result.channels, "Predicted Revenue"])
+    values.extend(
+        [
+            seasonality_total,
+            controls_total,
+            *[channel_totals[c] for c in result.channels],
+            predicted_total,
+        ]
     )
-    values = [
-        intercept_total,
-        trend_total,
-        seasonality_total,
-        controls_total,
-        *[channel_totals[c] for c in result.channels],
-        predicted_total,
-    ]
+    measures = ["absolute"] + ["relative"] * (len(values) - 2) + ["total"]
 
     fig = go.Figure(
         go.Waterfall(
@@ -472,7 +468,7 @@ def _build_kpi_grid(
                 helper="Mean absolute percent error on fitted period",
             ),
             kpi_card(
-                label="Recent-window MAPE",
+                label="Recent in-sample MAPE",
                 value=_fmt_pct_opt(temporal.get("recent_mape")),
                 icon="tabler:calendar-stats",
                 helper=(
@@ -518,6 +514,113 @@ def _build_kpi_grid(
                 value=str(result.n_weeks),
                 icon="tabler:calendar",
                 helper=date_range,
+            ),
+        ],
+    )
+
+
+def backtest_panel(result: ModelResult) -> dmc.Stack:
+    """Rolling-origin forecast validation panel."""
+    bt = rolling_origin_validation_metrics(result, horizon=4, n_cutoffs=3)
+    rows = bt.get("rows") or []
+    if not rows:
+        return dmc.Stack(
+            gap="sm",
+            children=[
+                dmc.Text(
+                    "Not enough history for rolling-origin validation.",
+                    size="sm",
+                    c="dimmed",
+                )
+            ],
+        )
+
+    summary = dmc.SimpleGrid(
+        cols={"base": 2, "md": 4},
+        spacing="md",
+        children=[
+            dmc.Stack(
+                gap=2,
+                children=[
+                    dmc.Text(label, size="xs", c="dimmed", tt="uppercase", fw=600),
+                    dmc.Text(value, size="lg", fw=600, className="mmm-numeric"),
+                ],
+            )
+            for label, value in [
+                ("Holdout MAPE", _fmt_pct_opt(bt.get("mape"))),
+                ("Holdout RMSE", _fmt_currency(float(bt.get("rmse") or 0.0))),
+                ("Forecast bias", _fmt_pct_opt(bt.get("bias"))),
+                ("94% interval coverage", _fmt_pct_opt(bt.get("coverage"))),
+            ]
+        ],
+    )
+    table_rows = [
+        dmc.TableTr(
+            [
+                dmc.TableTd(
+                    dmc.Text(
+                        f"{row['forecast_start']} to {row['forecast_end']}",
+                        size="sm",
+                    )
+                ),
+                dmc.TableTd(
+                    dmc.Text(str(row["train_weeks"]), size="sm", className="mmm-numeric")
+                ),
+                dmc.TableTd(
+                    dmc.Text(_fmt_pct_opt(row["mape"]), size="sm", className="mmm-numeric")
+                ),
+                dmc.TableTd(
+                    dmc.Text(
+                        _fmt_currency(float(row["rmse"])),
+                        size="sm",
+                        className="mmm-numeric",
+                    )
+                ),
+                dmc.TableTd(
+                    dmc.Text(_fmt_pct_opt(row["bias"]), size="sm", className="mmm-numeric")
+                ),
+                dmc.TableTd(
+                    dmc.Text(
+                        _fmt_pct_opt(row["coverage"]),
+                        size="sm",
+                        className="mmm-numeric",
+                    )
+                ),
+            ]
+        )
+        for row in rows
+    ]
+    return dmc.Stack(
+        gap="md",
+        children=[
+            dmc.Text(
+                "Rolling-origin holdouts train only on prior weeks and forecast the next "
+                f"{bt['horizon']} weeks. This is a fast ridge surrogate over media/time inputs, "
+                "not a repeated PyMC MMM refit.",
+                size="sm",
+                c="dimmed",
+            ),
+            summary,
+            dmc.Table(
+                striped=True,
+                highlightOnHover=True,
+                withTableBorder=False,
+                verticalSpacing="sm",
+                children=[
+                    dmc.TableThead(
+                        dmc.TableTr(
+                            [
+                                dmc.TableTh("Forecast window"),
+                                dmc.TableTh("Train weeks"),
+                                dmc.TableTh("MAPE"),
+                                dmc.TableTh("RMSE"),
+                                dmc.TableTh("Bias"),
+                                dmc.TableTh("Coverage"),
+                            ]
+                        )
+                    ),
+                    dmc.TableTbody(table_rows),
+                ],
             ),
         ],
     )
@@ -617,7 +720,11 @@ def build_overview(result: ModelResult) -> dmc.Stack:
             dmc.GridCol(
                 section(
                     "Revenue Decomposition",
-                    "Intercept, trend, seasonality, controls, and channel lift for the selected window.",
+                    (
+                        "Intercept, trend, seasonality, controls, and channel lift for the selected window."
+                        if TREND_COLUMNS
+                        else "Intercept, seasonality, controls, and channel lift for the selected window."
+                    ),
                     dcc.Graph(
                         id=OVERVIEW_WATERFALL_ID,
                         figure=revenue_waterfall(result),
@@ -687,6 +794,25 @@ def build_overview(result: ModelResult) -> dmc.Stack:
                     ),
                 ],
                 value="residuals",
+            ),
+            dmc.AccordionItem(
+                [
+                    dmc.AccordionControl(
+                        dmc.Stack(
+                            gap=2,
+                            children=[
+                                dmc.Text("Backtest", size="sm", fw=600),
+                                dmc.Text(
+                                    "Rolling-origin forecast checks on unseen weeks.",
+                                    size="xs",
+                                    c="dimmed",
+                                ),
+                            ],
+                        )
+                    ),
+                    dmc.AccordionPanel(backtest_panel(result)),
+                ],
+                value="backtest",
             ),
         ],
     )

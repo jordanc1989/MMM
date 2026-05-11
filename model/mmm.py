@@ -2,7 +2,7 @@
 
 Architecture:
     Revenue_t = intercept
-              + linear_trend_t              (via the `t` control column)
+              + optional_trend_controls_t   (when configured in data.loader)
               + yearly_seasonality_t        (Fourier, n_order=3)
               + sum_k gamma_k * control_k_t (economic controls)
               + sum_c beta_c * LogisticSaturation(
@@ -991,6 +991,22 @@ def response_curve(
     return grid, mean_contrib, avg_weekly, sat_90_weekly, hdi_low, hdi_high
 
 
+def observed_spend_support(
+    result: ModelResult,
+    channel: str,
+    low_q: float = 0.05,
+    high_q: float = 0.95,
+) -> tuple[float, float]:
+    """Observed weekly spend support range for a channel."""
+    spend = np.asarray(result.spend[channel], dtype=float)
+    if spend.size == 0:
+        return 0.0, 0.0
+    return (
+        float(np.quantile(spend, low_q)),
+        float(np.quantile(spend, high_q)),
+    )
+
+
 def optimise_budget(
     result: ModelResult,
     allocation: dict[str, float],
@@ -1030,6 +1046,73 @@ def optimise_budget(
         "baseline_revenue": baseline_total,
         "channel_contribution": per_channel,
         "channel_roi": roi,
+    }
+
+
+def posterior_budget_summary(
+    result: ModelResult,
+    allocation: dict[str, float],
+    *,
+    current_allocation: dict[str, float] | None = None,
+    uplift_threshold: float | None = None,
+) -> dict[str, float | tuple[float, float]]:
+    """Posterior draw summary for a steady-state allocation.
+
+    Uses posterior draws of channel saturation parameters. Baseline is held at
+    the fitted-window mean because the optimiser only changes paid media mix.
+    """
+    mmm = _cached_mmm()
+    point = optimise_budget(result, allocation)
+    expected = float(point["total_revenue"])
+    if mmm is None:
+        return {
+            "expected_revenue": expected,
+            "revenue_hdi": (expected, expected),
+            "prob_proposed_gt_current": 0.5,
+            "prob_uplift_gt_0": 0.5,
+            "prob_uplift_gt_threshold": 0.5,
+            "uplift_threshold": float(uplift_threshold or 0.0),
+        }
+
+    post = mmm.idata.posterior
+    samples = post.sizes["chain"] * post.sizes["draw"]
+    revenue_draws = np.zeros(samples, dtype=float)
+    current_draws = np.zeros(samples, dtype=float)
+    current_allocation = current_allocation or current_weekly_allocation(result)
+    weeks = result.n_weeks
+    baseline_total = float(result.baseline.mean() * weeks)
+
+    for c in result.channels:
+        col = f"{c}_spend"
+        lam = post["saturation_lam"].sel(channel=col).to_numpy().ravel()
+        beta = post["saturation_beta"].sel(channel=col).to_numpy().ravel()
+        scale = max(float(result.channel_scale[c]), 1e-12)
+
+        w_new = float(allocation.get(c, 0.0))
+        x_new = w_new / scale
+        sat_new = (1.0 - np.exp(-lam * x_new)) / (1.0 + np.exp(-lam * x_new))
+        revenue_draws += beta * sat_new * result.target_scale * weeks
+
+        w_cur = float(current_allocation.get(c, 0.0))
+        x_cur = w_cur / scale
+        sat_cur = (1.0 - np.exp(-lam * x_cur)) / (1.0 + np.exp(-lam * x_cur))
+        current_draws += beta * sat_cur * result.target_scale * weeks
+
+    revenue_draws += baseline_total
+    current_draws += baseline_total
+    uplift_draws = revenue_draws - current_draws
+    threshold = (
+        float(uplift_threshold)
+        if uplift_threshold is not None
+        else max(0.0, abs(float(current_draws.mean())) * 0.01)
+    )
+    return {
+        "expected_revenue": float(revenue_draws.mean()),
+        "revenue_hdi": _hdi(revenue_draws, prob=0.94),
+        "prob_proposed_gt_current": float(np.mean(revenue_draws > current_draws)),
+        "prob_uplift_gt_0": float(np.mean(uplift_draws > 0.0)),
+        "prob_uplift_gt_threshold": float(np.mean(uplift_draws > threshold)),
+        "uplift_threshold": threshold,
     }
 
 
@@ -1256,6 +1339,110 @@ def channel_window_roi_hdi(
         float(np.quantile(roi_s, 0.03)),
         float(np.quantile(roi_s, 0.97)),
     )
+
+
+def rolling_origin_validation_metrics(
+    result: ModelResult,
+    *,
+    horizon: int = 4,
+    n_cutoffs: int = 3,
+    min_train_weeks: int = 52,
+) -> dict[str, float | int | list[dict[str, float | int | str]] | None]:
+    """Rolling-origin forecast check using train-only ridge fits.
+
+    This intentionally does not refit the full PyMC MMM at each cutoff. It uses
+    weekly spend and calendar Fourier terms, fits coefficients only on weeks
+    before each origin, and scores the next holdout block.
+    """
+    n = result.n_weeks
+    horizon = max(1, int(horizon))
+    if n < min_train_weeks + horizon:
+        return {
+            "horizon": horizon,
+            "n_cutoffs": 0,
+            "mape": None,
+            "rmse": None,
+            "bias": None,
+            "coverage": None,
+            "rows": [],
+        }
+
+    max_origin = n - horizon
+    first_origin = max(int(min_train_weeks), max_origin - (n_cutoffs - 1) * horizon)
+    origins = list(range(first_origin, max_origin + 1, horizon))[-n_cutoffs:]
+
+    dates = pd.to_datetime(result.dates)
+    t = np.arange(n, dtype=float)
+    parts = [np.ones((n, 1), dtype=float)]
+    for k in range(1, FOURIER_N_ORDER + 1):
+        angle = 2.0 * np.pi * k * t / 52.0
+        parts.extend([np.sin(angle)[:, None], np.cos(angle)[:, None]])
+    for c in result.channels:
+        spend = np.asarray(result.spend[c], dtype=float)
+        scale = max(float(np.median(spend[spend > 0])) if np.any(spend > 0) else 1.0, 1.0)
+        parts.append(np.log1p(spend / scale)[:, None])
+    X = np.hstack(parts)
+    y = np.asarray(result.revenue, dtype=float)
+
+    rows: list[dict[str, float | int | str]] = []
+    all_actual: list[np.ndarray] = []
+    all_pred: list[np.ndarray] = []
+    all_low: list[np.ndarray] = []
+    all_high: list[np.ndarray] = []
+
+    for origin in origins:
+        train = slice(0, origin)
+        holdout = slice(origin, origin + horizon)
+        x_train = X[train].copy()
+        x_holdout = X[holdout].copy()
+        mu = x_train[:, 1:].mean(axis=0)
+        sd = x_train[:, 1:].std(axis=0)
+        sd = np.where(sd > 1e-9, sd, 1.0)
+        x_train[:, 1:] = (x_train[:, 1:] - mu) / sd
+        x_holdout[:, 1:] = (x_holdout[:, 1:] - mu) / sd
+
+        ridge = 1.0
+        penalty = np.eye(x_train.shape[1]) * ridge
+        penalty[0, 0] = 0.0
+        coef = np.linalg.solve(x_train.T @ x_train + penalty, x_train.T @ y[train])
+        fitted_train = x_train @ coef
+        pred = x_holdout @ coef
+        resid_sd = float(np.std(y[train] - fitted_train, ddof=1))
+        half_width = 1.8808 * resid_sd
+        low = pred - half_width
+        high = pred + half_width
+        actual = y[holdout]
+        error = pred - actual
+        rows.append(
+            {
+                "train_weeks": int(origin),
+                "forecast_start": dates[origin].date().isoformat(),
+                "forecast_end": dates[origin + horizon - 1].date().isoformat(),
+                "mape": _mape(actual, pred),
+                "rmse": float(np.sqrt(np.mean(error**2))),
+                "bias": float(np.mean(error) / np.mean(actual)) if np.mean(actual) else 0.0,
+                "coverage": float(np.mean((actual >= low) & (actual <= high))),
+            }
+        )
+        all_actual.append(actual)
+        all_pred.append(pred)
+        all_low.append(low)
+        all_high.append(high)
+
+    actual_all = np.concatenate(all_actual)
+    pred_all = np.concatenate(all_pred)
+    low_all = np.concatenate(all_low)
+    high_all = np.concatenate(all_high)
+    err_all = pred_all - actual_all
+    return {
+        "horizon": horizon,
+        "n_cutoffs": len(rows),
+        "mape": _mape(actual_all, pred_all),
+        "rmse": float(np.sqrt(np.mean(err_all**2))),
+        "bias": float(np.mean(err_all) / np.mean(actual_all)) if np.mean(actual_all) else 0.0,
+        "coverage": float(np.mean((actual_all >= low_all) & (actual_all <= high_all))),
+        "rows": rows,
+    }
 
 
 def _bounded_initial_weights(

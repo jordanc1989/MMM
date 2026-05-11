@@ -5,12 +5,13 @@ description = "Marketing Mix Modelling Dashboard in Plotly Dash"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "arviz>=0.23.4",
     "dash>=4.1.0",
     "dash-iconify>=0.1.2",
-    "dash-mantine-components>=2.6.1",
+    "dash-mantine-components>=2.7.0",
     "jax>=0.10.0",
-    "nutpie>=0.16.8",
-    "pymc-marketing>=0.19.3",
+    "nutpie>=0.16.10",
+    "pymc-marketing>=0.19.4",
     "scipy>=1.17.1",
     "xarray>=2026.4.0",
 ]

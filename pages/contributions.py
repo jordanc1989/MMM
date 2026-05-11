@@ -1,7 +1,7 @@
 """Channel Contributions page: stacked area, contribution %, per-channel table.
 
 The stacked-area HDI band shows posterior uncertainty for the *sum of paid channel
-contributions* only. Baseline (intercept, trend, seasonality, controls) is drawn at
+contributions* only. Baseline (intercept, optional trend, seasonality, controls) is drawn at
 posterior mean, so the band is not a full predictive envelope for total revenue.
 """
 

@@ -13,7 +13,9 @@ from components.ids import MODEL_REFRESH_STORE
 from model.mmm import (
     ModelResult,
     current_weekly_allocation,
+    observed_spend_support,
     optimise_budget,
+    posterior_budget_summary,
     recommended_weekly_allocation,
     steady_state_current_budget_prediction,
 )
@@ -27,7 +29,9 @@ CONSTRAINT_MIN_ID = {"type": "budget-min-spend", "channel": ""}
 CONSTRAINT_MAX_ID = {"type": "budget-max-spend", "channel": ""}
 OPTIMISER_STATUS_ID = "budget-optimiser-status"
 PREDICTED_REV_ID = "budget-predicted-revenue"
+PREDICTED_HDI_ID = "budget-predicted-hdi"
 UPLIFT_ID = "budget-predicted-uplift"
+UPLIFT_PROB_ID = "budget-uplift-probability"
 UTILISATION_ID = "budget-utilisation"
 ROI_TABLE_ID = "budget-roi-table"
 ALLOC_CURRENT_GRAPH_ID = "budget-alloc-current-pie"
@@ -45,8 +49,31 @@ def _fmt_currency(v: float) -> str:
     return f"${v:,.0f}"
 
 
+def _fmt_pct(v: float) -> str:
+    return f"{v * 100:.0f}%"
+
+
 def _current_weekly_alloc(result: ModelResult) -> dict[str, float]:
     return current_weekly_allocation(result)
+
+
+def _support_status(result: ModelResult, channel: str, weekly_spend: float) -> tuple[str, str]:
+    p5, p95 = observed_spend_support(result, channel)
+    if weekly_spend < p5:
+        return f"Below P5 ({_fmt_currency(p5)}/wk)", "orange"
+    if weekly_spend > p95:
+        return f"Above P95 ({_fmt_currency(p95)}/wk)", "orange"
+    return "Inside P5-P95", "dimmed"
+
+
+def _outside_support_count(result: ModelResult, alloc: dict[str, float]) -> int:
+    count = 0
+    for c in result.channels:
+        p5, p95 = observed_spend_support(result, c)
+        w = float(alloc.get(c, 0.0))
+        if w < p5 or w > p95:
+            count += 1
+    return count
 
 
 def _allocation_donut(
@@ -76,18 +103,18 @@ def _allocation_donut(
 
 def _weights_from_weekly_alloc(
     channels: list[str], alloc: dict[str, float]
-) -> dict[str, int]:
+) -> dict[str, float]:
     total = sum(alloc.get(c, 0.0) for c in channels) or 1.0
-    weights = {c: round(float(alloc[c]) / total * 100) for c in channels}
-    drift = 100 - sum(weights.values())
-    if drift and channels:
-        weights[channels[0]] += drift
-    return weights
+    return {c: float(alloc[c]) / total * 100.0 for c in channels}
 
 
-def _default_weights(result: ModelResult) -> dict[str, int]:
+def _default_weights(result: ModelResult) -> dict[str, float]:
     alloc = _current_weekly_alloc(result)
     return _weights_from_weekly_alloc(result.channels, alloc)
+
+
+def _fmt_weight(weight: float) -> str:
+    return f"{weight:.1f}% weight"
 
 
 def _constraint_dict(
@@ -113,7 +140,7 @@ def _constraint_dict(
     return out
 
 
-def _channel_row(channel: str, weight: int, weekly_amount: float) -> dmc.Stack:
+def _channel_row(channel: str, weight: float, weekly_amount: float) -> dmc.Stack:
     return dmc.Stack(
         gap=6,
         children=[
@@ -137,7 +164,7 @@ def _channel_row(channel: str, weight: int, weekly_amount: float) -> dmc.Stack:
                         gap="md",
                         children=[
                             dmc.Text(
-                                f"{weight}% weight",
+                                _fmt_weight(weight),
                                 size="xs",
                                 c="dimmed",
                                 id={**WEIGHT_LABEL_ID, "channel": channel},
@@ -158,7 +185,7 @@ def _channel_row(channel: str, weight: int, weekly_amount: float) -> dmc.Stack:
                 id={**SLIDER_ID, "channel": channel},
                 min=0,
                 max=100,
-                step=1,
+                step=0.1,
                 value=weight,
                 color="teal",
                 marks=[{"value": v, "label": ""} for v in (0, 25, 50, 75, 100)],
@@ -243,6 +270,7 @@ def _constraints_table(result: ModelResult) -> dmc.Table:
 
 
 def _roi_rows(
+    result: ModelResult,
     channels: list[str],
     current: dict[str, float],
     optimised_alloc: dict[str, float],
@@ -263,6 +291,7 @@ def _roi_rows(
         delta_rev = opt_rev - cur_rev
         delta_color = "teal" if delta_rev >= 0 else "red"
         delta_icon = "tabler:trending-up" if delta_rev >= 0 else "tabler:trending-down"
+        support_label, support_color = _support_status(result, c, optimised_alloc[c])
         rows.append(
             dmc.TableTr(
                 [
@@ -282,6 +311,7 @@ def _roi_rows(
                     ),
                     dmc.TableTd(dmc.Text(_fmt_currency(cur_spend_total), size="sm", className="mmm-numeric")),
                     dmc.TableTd(dmc.Text(_fmt_currency(opt_spend_total), size="sm", className="mmm-numeric")),
+                    dmc.TableTd(dmc.Text(support_label, size="sm", c=support_color)),
                     dmc.TableTd(dmc.Text(f"{cur_roi:.2f}x", size="sm", className="mmm-numeric")),
                     dmc.TableTd(
                         dmc.Text(
@@ -330,6 +360,7 @@ def _roi_table(rows: list[dmc.TableTr]) -> dmc.Table:
                         dmc.TableTh("Channel"),
                         dmc.TableTh("Current spend"),
                         dmc.TableTh("New spend"),
+                        dmc.TableTh("Support"),
                         dmc.TableTh("Current ROI"),
                         dmc.TableTh("New ROI"),
                         dmc.TableTh("Revenue Δ"),
@@ -352,11 +383,23 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     sliders = [_channel_row(c, weights[c], current_alloc[c]) for c in result.channels]
 
     current_pred = steady_state_current_budget_prediction(result)
+    current_summary = posterior_budget_summary(
+        result,
+        current_alloc,
+        current_allocation=current_alloc,
+    )
     roi_rows = _roi_rows(
-        result.channels, current_alloc, current_alloc, current_pred, current_pred, result.n_weeks
+        result,
+        result.channels,
+        current_alloc,
+        current_alloc,
+        current_pred,
+        current_pred,
+        result.n_weeks,
     )
 
-    total_rev = float(current_pred["total_revenue"])
+    total_rev = float(current_summary["expected_revenue"])
+    hdi_low, hdi_high = current_summary["revenue_hdi"]  # type: ignore[assignment]
 
     predicted_kpi = dmc.Paper(
         p="lg",
@@ -387,9 +430,10 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
                             className="mmm-numeric",
                         ),
                         dmc.Text(
-                            "Baseline plus steady-state paid media contribution",
+                            f"94% HDI {_fmt_currency(float(hdi_low))}–{_fmt_currency(float(hdi_high))}",
                             size="xs",
                             c="dimmed",
+                            id=PREDICTED_HDI_ID,
                         ),
                     ],
                 ),
@@ -436,6 +480,13 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
                             size="xs",
                             c="dimmed",
                             id=UTILISATION_ID,
+                        ),
+                        dmc.Text(
+                            "P(proposed > current): 0%",
+                            size="xs",
+                            c="dimmed",
+                            id=UPLIFT_PROB_ID,
+                            className="mmm-numeric",
                         ),
                     ],
                 ),
@@ -535,11 +586,13 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     recommended_alloc = recommended_weekly_allocation(result)
     rec_pred = optimise_budget(result, recommended_alloc)
     rec_rev = float(rec_pred["total_revenue"])
+    rec_outside = _outside_support_count(result, recommended_alloc)
 
     alloc_charts = section(
         "Allocation mix",
         "Current weekly mix (from data), your proposed mix (sliders), and a model-suggested "
-        f"steady-state mix ({_fmt_currency(rec_rev)} at suggested mix).",
+        f"steady-state mix ({_fmt_currency(rec_rev)} at suggested mix; "
+        f"{rec_outside} channel{'s' if rec_outside != 1 else ''} outside observed P5-P95 support).",
         dmc.Grid(
             gutter="md",
             children=[
@@ -613,9 +666,11 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
 def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) -> None:
     @app.callback(
         Output(PREDICTED_REV_ID, "children"),
+        Output(PREDICTED_HDI_ID, "children"),
         Output(UPLIFT_ID, "children"),
         Output(UPLIFT_ID, "c"),
         Output(UTILISATION_ID, "children"),
+        Output(UPLIFT_PROB_ID, "children"),
         Output(ROI_TABLE_ID, "children"),
         Output(ALLOC_PROPOSED_GRAPH_ID, "figure"),
         Output({**WEIGHT_LABEL_ID, "channel": ALL}, "children"),
@@ -639,31 +694,62 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
 
         current_pred = steady_state_current_budget_prediction(result)
         new_pred = optimise_budget(result, new_alloc)
+        current_summary = posterior_budget_summary(
+            result,
+            current_alloc,
+            current_allocation=current_alloc,
+        )
+        posterior = posterior_budget_summary(
+            result,
+            new_alloc,
+            current_allocation=current_alloc,
+        )
 
-        cur_rev = float(current_pred["total_revenue"])
-        new_rev = float(new_pred["total_revenue"])
+        cur_rev = float(current_summary["expected_revenue"])
+        new_rev = float(posterior["expected_revenue"])
         uplift = new_rev - cur_rev
         uplift_color = "teal" if uplift >= 0 else "red"
         uplift_str = ("+" if uplift >= 0 else "") + _fmt_currency(uplift)
         pct_change = (uplift / cur_rev * 100) if cur_rev else 0.0
-        utilisation = f"{pct_change:+.2f}% vs current allocation"
+        outside = _outside_support_count(result, new_alloc)
+        support_note = (
+            f"; {outside} channel{'s' if outside != 1 else ''} outside observed support"
+            if outside
+            else "; all channels inside observed support"
+        )
+        utilisation = f"{pct_change:+.2f}% vs current allocation{support_note}"
+        hdi_low, hdi_high = posterior["revenue_hdi"]  # type: ignore[assignment]
+        threshold = float(posterior["uplift_threshold"])
+        prob_line = (
+            f"P(proposed > current): {_fmt_pct(float(posterior['prob_proposed_gt_current']))} · "
+            f"P(uplift > {_fmt_currency(threshold)}): "
+            f"{_fmt_pct(float(posterior['prob_uplift_gt_threshold']))}"
+        )
 
         rows = _roi_rows(
-            channels, current_alloc, new_alloc, current_pred, new_pred, result.n_weeks
+            result,
+            channels,
+            current_alloc,
+            new_alloc,
+            current_pred,
+            new_pred,
+            result.n_weeks,
         )
 
         prop_fig = _allocation_donut(
             channels, new_alloc, title="Proposed (sliders)"
         )
 
-        weight_children = [f"{round(w * 100)}% weight" for w in weights_pct]
+        weight_children = [_fmt_weight(w * 100.0) for w in weights_pct]
         alloc_children = [_fmt_currency(new_alloc[c]) + " / week" for c in channels]
 
         return (
             _fmt_currency(new_rev),
+            f"94% HDI {_fmt_currency(float(hdi_low))}–{_fmt_currency(float(hdi_high))}",
             uplift_str,
             uplift_color,
             utilisation,
+            prob_line,
             _roi_table(rows),
             prop_fig,
             weight_children,
@@ -702,10 +788,12 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
                 status = dmc.Text(str(exc), size="xs", c="red")
                 return no_update, no_update, status
             weights = _weights_from_weekly_alloc(result.channels, rec)
+            outside = _outside_support_count(result, rec)
             status = dmc.Text(
-                "Optimisation re-run with current constraints.",
+                "Optimisation re-run with current constraints; "
+                f"{outside} channel{'s' if outside != 1 else ''} outside observed support.",
                 size="xs",
-                c="teal",
+                c="orange" if outside else "teal",
             )
             fig = _allocation_donut(
                 result.channels,
