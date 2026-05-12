@@ -953,7 +953,8 @@ def response_curve(
     target_scale = result.target_scale
 
     avg_weekly = float(result.spend[channel].mean())
-    grid_max = max(avg_weekly, 1.0) * max_multiple
+    _support_p5, support_p95 = observed_spend_support(result, channel)
+    grid_max = max(avg_weekly * max_multiple, support_p95 * 1.05, 1.0)
     grid = np.linspace(0.0, grid_max, n_points)
 
     mean_contrib = _steady_state_contribution(

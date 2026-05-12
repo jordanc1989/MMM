@@ -68,10 +68,10 @@ The app is intentionally split by responsibility: `model/mmm.py` handles fitting
 
 ## Diagnostics notes
 
-The Overview page includes two different kinds of diagnostics:
+The Overview page has two different kinds of diagnostics:
 
 - **MCMC diagnostics** report sampler health and cache-related metadata. Requested sampler settings are shown separately from cached posterior draws per chain.
-- **Fast holdout check** is a lightweight temporal stress test, not a full Bayesian MMM backtest. It fits a ridge surrogate on prior weeks and forecasts short holdout windows, then compares the surrogate against simple naive benchmarks. Treat it as a smoke test for instability or short-term extrapolation, not as repeated Bayesian refits.
+- **Fast holdout check** is a lightweight temporal stress test (not a full Bayesian MMM backtest). It fits a ridge surrogate on prior weeks and forecasts short holdout windows then compares the surrogate against simple naive benchmarks. 
 
 ## To Add
 
@@ -93,7 +93,7 @@ uv sync
 uv run app.py
 ```
 
-Open **http://127.0.0.1:8050**. The first model fit can take around a minute or two while NUTS runs, subsequent starts should be faster.
+Open **http://127.0.0.1:8050**. The first model fit can take a couple of minutes while NUTS runs, subsequent starts should be faster.
 
 
 ## Disclaimer

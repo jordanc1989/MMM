@@ -86,7 +86,7 @@ def build_response_curves(result: ModelResult) -> dmc.Stack:
                     ),
                     dmc.Text(
                         "Markers: average weekly spend, observed P5-P95 support, and spend where "
-                        "logistic saturation reaches 90% of its asymptote.",
+                        "logistic saturation reaches 90% of its asymptote when that point is in range.",
                         size="xs",
                         c="dimmed",
                         maw=560,
