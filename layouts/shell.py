@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dash_mantine_components as dmc
+import dash
 from dash import dcc, html
 from dash_iconify import DashIconify
 
@@ -27,23 +28,28 @@ from dashboard.theme import (
     REFIT_OVERLAY_STYLE,
     mantine_theme,
 )
-from layouts.overview import build_overview, build_overview_toolbar
+from layouts.overview import build_overview_toolbar
 from model.mmm import ModelResult
 
-ROUTES = [
-    ("/", "Overview", "tabler:layout-dashboard"),
-    ("/contributions", "Contributions", "tabler:chart-area-line"),
-    ("/response-curves", "Response Curves", "tabler:chart-ppf"),
-    ("/optimiser", "Optimiser", "tabler:adjustments-horizontal"),
-]
+
+def nav_pages() -> list[dict]:
+    return [
+        page
+        for page in dash.page_registry.values()
+        if page.get("path") and not page.get("hide_from_nav")
+    ]
 
 
-def _nav_link(path: str, label: str, icon: str) -> dmc.NavLink:
+def _nav_link(page: dict) -> dmc.NavLink:
+    path = str(page["path"])
     return dmc.NavLink(
         id={"type": "nav", "path": path},
-        label=label,
-        leftSection=DashIconify(icon=icon, width=16),
-        href=path,
+        label=page["name"],
+        leftSection=DashIconify(
+            icon=page.get("icon", "tabler:circle"),
+            width=16,
+        ),
+        href=page.get("relative_path", path),
         active=False,
         variant="light",
         color="teal",
@@ -191,7 +197,7 @@ def navbar(result: ModelResult) -> dmc.AppShellNavbar:
         children=dmc.Stack(
             gap="xs",
             children=[
-                *[_nav_link(path, label, icon) for path, label, icon in ROUTES],
+                *[_nav_link(page) for page in nav_pages()],
                 dmc.Divider(my="md"),
                 dmc.Text("Model", size="xs", c="dimmed", tt="uppercase", fw=600),
                 dmc.Stack(
@@ -404,11 +410,10 @@ def build_shell(result: ModelResult) -> dmc.MantineProvider:
                                 children=[
                                     build_overview_toolbar(result),
                                     dmc.Container(
-                                        id="page-content",
                                         fluid=True,
                                         px=0,
                                         style=PAGE_CONTAINER_STYLE,
-                                        children=build_overview(result),
+                                        children=dash.page_container,
                                     ),
                                 ],
                             )

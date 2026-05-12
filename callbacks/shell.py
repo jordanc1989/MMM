@@ -1,4 +1,4 @@
-"""Callbacks for routing, navigation state, and model refits."""
+"""Callbacks for navigation state and model refits."""
 
 from __future__ import annotations
 
@@ -23,13 +23,9 @@ from components.ids import (
 )
 from dashboard.theme import REFIT_OVERLAY_STYLE
 from data.loader import aggregate_geo, load_meridian, select_demo_geo
-from layouts.optimiser import build_optimiser
-from layouts.overview import build_overview
-from layouts.response_curves import build_response_curves
-from layouts.shell import ROUTES, refit_progress_from_snapshot
+from layouts.shell import nav_pages, refit_progress_from_snapshot
 from model.mmm import ModelResult, fit_surrogate, save_sampler_config
 from model.sampling_progress import SamplingProgressTracker
-from pages.contributions import build_contributions
 
 
 def register_shell_callbacks(app, results_by_geo: dict[str, ModelResult]) -> None:
@@ -41,21 +37,6 @@ def register_shell_callbacks(app, results_by_geo: dict[str, ModelResult]) -> Non
         if isinstance(data, dict) and data.get("open"):
             return {**REFIT_OVERLAY_STYLE, "display": "flex"}
         return {**REFIT_OVERLAY_STYLE, "display": "none"}
-
-    @app.callback(
-        Output("page-content", "children"),
-        Input("url", "pathname"),
-        Input(MODEL_REFRESH_STORE, "data"),
-    )
-    def _render(pathname: str, _refresh: int | None):
-        result = results_by_geo["All"]
-        if pathname == "/contributions":
-            return build_contributions(result)
-        if pathname == "/response-curves":
-            return build_response_curves(result)
-        if pathname == "/optimiser":
-            return build_optimiser(result)
-        return build_overview(result)
 
     _refit = {
         "thread": None,
@@ -212,13 +193,15 @@ def register_shell_callbacks(app, results_by_geo: dict[str, ModelResult]) -> Non
             {"running": False},
         )
 
+    pages = nav_pages()
+
     @app.callback(
-        *[Output({"type": "nav", "path": p}, "active") for p, _, _ in ROUTES],
+        *[Output({"type": "nav", "path": page["path"]}, "active") for page in pages],
         Input("url", "pathname"),
     )
-    def _active(pathname: str):
+    def _active(pathname: str | None):
         pathname = pathname or "/"
         return tuple(
-            p == pathname or (p == "/" and pathname in ("", "/"))
-            for p, _, _ in ROUTES
+            page["path"] == pathname or (page["path"] == "/" and pathname in ("", "/"))
+            for page in pages
         )

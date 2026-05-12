@@ -68,15 +68,15 @@ def mcmc_diagnostics_panel(result: ModelResult) -> dmc.Stack:
         ("Energy mean", _fmt_opt(d.get("energy_mean"))),
         ("Energy SD", _fmt_opt(d.get("energy_sd"))),
         ("Chains", _fmt_opt(d.get("chains"))),
-        ("Draws / chain", _fmt_opt(d.get("draws_per_chain"))),
+        ("Cached draws / chain", _fmt_opt(d.get("draws_per_chain"))),
     ]
     sc = result.sampler_config or {}
     rows_fixed.insert(
         0,
         ("Target accept", _fmt_opt(sc.get("target_accept"))),
     )
-    rows_fixed.insert(1, ("Tune", _fmt_opt(sc.get("tune"))))
-    rows_fixed.insert(2, ("Draws", _fmt_opt(sc.get("draws"))))
+    rows_fixed.insert(1, ("Requested tune / chain", _fmt_opt(sc.get("tune"))))
+    rows_fixed.insert(2, ("Requested draws / chain", _fmt_opt(sc.get("draws"))))
     rows_fixed.insert(3, ("Adstock l_max (lags)", str(result.adstock_l_max)))
 
     head = dmc.TableThead(
@@ -307,7 +307,7 @@ def _build_kpi_grid(
 
 
 def backtest_panel(result: ModelResult) -> dmc.Stack:
-    """Rolling-origin forecast validation panel."""
+    """Lightweight rolling-origin surrogate forecast check."""
     bt = rolling_origin_validation_metrics(result, horizon=4, n_cutoffs=3)
     rows = bt.get("rows") or []
     if not rows:
@@ -322,6 +322,53 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
             ],
         )
 
+    bias = bt.get("bias")
+    bias_value = float(bias) if bias is not None else None
+    if bias_value is None or abs(bias_value) < 0.0005:
+        bias_direction = "no average directional bias"
+    elif bias_value > 0:
+        bias_direction = "predicted above actual"
+    else:
+        bias_direction = "actual above predicted"
+    mape = float(bt.get("mape") or 0.0)
+    coverage = float(bt.get("coverage") or 0.0)
+    signal = (
+        "The surrogate struggles on these holdouts"
+        if mape >= 0.4 or abs(bias_value or 0.0) >= 0.15 or coverage < 0.9
+        else "The surrogate is comparatively stable on these holdouts"
+    )
+    benchmark_rows = [
+        dmc.TableTr(
+            [
+                dmc.TableTd(dmc.Text(str(row["method"]), size="sm")),
+                dmc.TableTd(
+                    dmc.Text(_fmt_pct_opt(row["mape"]), size="sm", className="mmm-numeric")
+                ),
+                dmc.TableTd(
+                    dmc.Text(
+                        _fmt_currency(float(row["rmse"] or 0.0)),
+                        size="sm",
+                        className="mmm-numeric",
+                    )
+                ),
+                dmc.TableTd(
+                    dmc.Text(
+                        _fmt_pct_opt(row["bias"]),
+                        size="sm",
+                        className="mmm-numeric",
+                    )
+                ),
+                dmc.TableTd(
+                    dmc.Text(
+                        _fmt_pct_opt(row.get("coverage")),
+                        size="sm",
+                        className="mmm-numeric",
+                    )
+                ),
+            ]
+        )
+        for row in (bt.get("benchmarks") or [])
+    ]
     summary = dmc.SimpleGrid(
         cols={"base": 2, "md": 4},
         spacing="md",
@@ -334,10 +381,10 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
                 ],
             )
             for label, value in [
-                ("Holdout MAPE", _fmt_pct_opt(bt.get("mape"))),
-                ("Holdout RMSE", _fmt_currency(float(bt.get("rmse") or 0.0))),
+                ("Surrogate MAPE", _fmt_pct_opt(bt.get("mape"))),
+                ("Surrogate RMSE", _fmt_currency(float(bt.get("rmse") or 0.0))),
                 ("Forecast bias", _fmt_pct_opt(bt.get("bias"))),
-                ("94% interval coverage", _fmt_pct_opt(bt.get("coverage"))),
+                ("Surrogate interval coverage", _fmt_pct_opt(bt.get("coverage"))),
             ]
         ],
     )
@@ -381,13 +428,46 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
         gap="md",
         children=[
             dmc.Text(
-                "Rolling-origin holdouts train only on prior weeks and forecast the next "
-                f"{bt['horizon']} weeks. This is a fast ridge surrogate over media/time inputs, "
-                "not a repeated PyMC MMM refit.",
+                "This panel is a lightweight temporal stress test, not a full Bayesian MMM "
+                "backtest. It fits a ridge surrogate on prior weeks and forecasts the next "
+                f"{bt['horizon']} weeks. Use it to spot instability, seasonality misses, or "
+                "poor short-term extrapolation. A full MMM backtest would refit the Bayesian "
+                "model at each cutoff.",
                 size="sm",
                 c="dimmed",
             ),
+            dmc.Alert(
+                (
+                    f"{signal}: MAPE is {_fmt_pct_opt(bt.get('mape'))}, average bias is "
+                    f"{_fmt_pct_opt(bt.get('bias'))} ({bias_direction}), and the nominal "
+                    f"94% surrogate interval covers {_fmt_pct_opt(bt.get('coverage'))} "
+                    "of holdout observations."
+                ),
+                color="yellow" if signal.startswith("The surrogate struggles") else "teal",
+                variant="light",
+                title="Surrogate forecast check",
+            ),
             summary,
+            dmc.Table(
+                striped=True,
+                highlightOnHover=True,
+                withTableBorder=False,
+                verticalSpacing="sm",
+                children=[
+                    dmc.TableThead(
+                        dmc.TableTr(
+                            [
+                                dmc.TableTh("Method"),
+                                dmc.TableTh("MAPE"),
+                                dmc.TableTh("RMSE"),
+                                dmc.TableTh("Bias"),
+                                dmc.TableTh("Coverage"),
+                            ]
+                        )
+                    ),
+                    dmc.TableTbody(benchmark_rows),
+                ],
+            ),
             dmc.Table(
                 striped=True,
                 highlightOnHover=True,
@@ -401,8 +481,8 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
                                 dmc.TableTh("Train weeks"),
                                 dmc.TableTh("MAPE"),
                                 dmc.TableTh("RMSE"),
-                                dmc.TableTh("Bias"),
-                                dmc.TableTh("Coverage"),
+                                dmc.TableTh("Bias (+ predicted above actual)"),
+                                dmc.TableTh("Surrogate coverage"),
                             ]
                         )
                     ),
@@ -524,11 +604,12 @@ def build_overview(result: ModelResult) -> dmc.Stack:
     )
 
     diagnostics = dmc.Accordion(
+        id="overview-diagnostics-accordion",
         multiple=True,
         variant="separated",
         radius="md",
         chevronPosition="right",
-        value=None,
+        value=["backtest"],
         className="mmm-accordion-residuals",
         children=[
             dmc.AccordionItem(
@@ -588,9 +669,9 @@ def build_overview(result: ModelResult) -> dmc.Stack:
                         dmc.Stack(
                             gap=2,
                             children=[
-                                dmc.Text("Backtest", size="sm", fw=600),
+                                dmc.Text("Fast holdout check", size="sm", fw=600),
                                 dmc.Text(
-                                    "Rolling-origin forecast checks on unseen weeks.",
+                                    "Surrogate forecast check on unseen weeks.",
                                     size="xs",
                                     c="dimmed",
                                 ),

@@ -1347,7 +1347,7 @@ def rolling_origin_validation_metrics(
     horizon: int = 4,
     n_cutoffs: int = 3,
     min_train_weeks: int = 52,
-) -> dict[str, float | int | list[dict[str, float | int | str]] | None]:
+) -> dict[str, float | int | list[dict[str, float | int | str | None]] | None]:
     """Rolling-origin forecast check using train-only ridge fits.
 
     This intentionally does not refit the full PyMC MMM at each cutoff. It uses
@@ -1389,6 +1389,8 @@ def rolling_origin_validation_metrics(
     all_pred: list[np.ndarray] = []
     all_low: list[np.ndarray] = []
     all_high: list[np.ndarray] = []
+    naive_last4_pred: list[np.ndarray] = []
+    seasonal_naive_pred: list[np.ndarray] = []
 
     for origin in origins:
         train = slice(0, origin)
@@ -1413,6 +1415,8 @@ def rolling_origin_validation_metrics(
         high = pred + half_width
         actual = y[holdout]
         error = pred - actual
+        naive_last4 = np.full(horizon, float(np.mean(y[max(0, origin - 4) : origin])))
+        seasonal_idx = np.arange(origin, origin + horizon) - 52
         rows.append(
             {
                 "train_weeks": int(origin),
@@ -1428,12 +1432,49 @@ def rolling_origin_validation_metrics(
         all_pred.append(pred)
         all_low.append(low)
         all_high.append(high)
+        naive_last4_pred.append(naive_last4)
+        if np.all(seasonal_idx >= 0):
+            seasonal_naive_pred.append(y[seasonal_idx])
 
     actual_all = np.concatenate(all_actual)
     pred_all = np.concatenate(all_pred)
     low_all = np.concatenate(all_low)
     high_all = np.concatenate(all_high)
+    naive_last4_all = np.concatenate(naive_last4_pred)
     err_all = pred_all - actual_all
+    benchmarks: list[dict[str, float | str | None]] = []
+
+    def _benchmark_row(method: str, yhat: np.ndarray) -> dict[str, float | str | None]:
+        err = yhat - actual_all
+        return {
+            "method": method,
+            "mape": _mape(actual_all, yhat),
+            "rmse": float(np.sqrt(np.mean(err**2))),
+            "bias": float(np.mean(err) / np.mean(actual_all))
+            if np.mean(actual_all)
+            else 0.0,
+            "coverage": None,
+        }
+
+    benchmarks.append(_benchmark_row("Naive last-4-week average", naive_last4_all))
+    if len(seasonal_naive_pred) == len(rows):
+        benchmarks.append(
+            _benchmark_row(
+                "Seasonal naive (same week last year)",
+                np.concatenate(seasonal_naive_pred),
+            )
+        )
+    benchmarks.append(
+        {
+            "method": "Ridge surrogate",
+            "mape": _mape(actual_all, pred_all),
+            "rmse": float(np.sqrt(np.mean(err_all**2))),
+            "bias": float(np.mean(err_all) / np.mean(actual_all))
+            if np.mean(actual_all)
+            else 0.0,
+            "coverage": float(np.mean((actual_all >= low_all) & (actual_all <= high_all))),
+        }
+    )
     return {
         "horizon": horizon,
         "n_cutoffs": len(rows),
@@ -1441,6 +1482,7 @@ def rolling_origin_validation_metrics(
         "rmse": float(np.sqrt(np.mean(err_all**2))),
         "bias": float(np.mean(err_all) / np.mean(actual_all)) if np.mean(actual_all) else 0.0,
         "coverage": float(np.mean((actual_all >= low_all) & (actual_all <= high_all))),
+        "benchmarks": benchmarks,
         "rows": rows,
     }
 

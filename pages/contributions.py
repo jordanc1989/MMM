@@ -11,11 +11,13 @@ import dash_mantine_components as dmc
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import dash
 from dash import Input, Output, dcc
 from dash.exceptions import PreventUpdate
 
 from components import CHANNEL_COLORS, apply_dark_theme, page_header, section
 from components.ids import MODEL_REFRESH_STORE
+from dashboard.state import current_result
 from model.mmm import (
     ModelResult,
     channel_window_roi_hdi,
@@ -28,6 +30,15 @@ CONTRIBUTION_STACK_GRAPH_ID = "contributions-stack-graph"
 CONTRIBUTION_SHARE_GRAPH_ID = "contributions-share-graph"
 CONTRIBUTIONS_ROI_GRAPH_ID = "contributions-roi-graph"
 CONTRIBUTIONS_TABLE_ID = "contributions-table"
+
+dash.register_page(
+    __name__,
+    path="/contributions",
+    name="Contributions",
+    title="Contributions | Bayesian MMM Dashboard",
+    order=1,
+    icon="tabler:chart-area-line",
+)
 
 
 # ---------- charts ---------------------------------------------------------
@@ -358,3 +369,7 @@ def register_contributions_callbacks(app, results_by_geo: dict[str, ModelResult]
             contribution_share_bar(sl),
             channel_table(sl),
         )
+
+
+def layout(**_kwargs):
+    return build_contributions(current_result())

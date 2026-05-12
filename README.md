@@ -10,7 +10,7 @@
 [![Demo](https://img.shields.io/badge/data-simulated-lightgrey)](https://github.com/google/meridian)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory (from the Google Meridian simulated dataset), then explores channel effects, budget trade-offs and optimisation in a clean UI with interactive elements.
+A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media Mix Modeling (MMM)**. It fits a Bayesian MMM on one sample territory from the Google Meridian simulated dataset, then explores channel effects, diagnostics, response curves, budget trade-offs, and optimisation in a clean multi-page UI.
 
 ## Screenshots
 
@@ -27,28 +27,57 @@ A web dashboard built in [Dash](https://dash.plotly.com/) for **Bayesian Media M
 
 ## What it does
 
-The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference is **NUTS** and posteriors are summarised with [ArviZ](https://python.arviz.org/).
+The app uses [PyMC-Marketing](https://www.pymc-marketing.io/) to estimate a multidimensional MMM with geometric adstock and logistic saturation on paid media spend, plus controls & seasonality. Inference uses **NUTS** and posteriors are summarised with [ArviZ](https://python.arviz.org/).
 
 **Data:** On first run it downloads Google [Meridian](https://github.com/google/meridian)’s simulated `geo_all_channels.csv` and caches it under `data/`. This is synthetic multi-geo weekly data; the app automatically selects the largest territory by revenue (`Geo36` in the bundled file) and models that one territory only.
 The meridian data has generic names for channels ("Channel1" etc), so these have been mapped to actual channel names like "Video", "Social" etc. for demonstration purposes.
 
-**Caching:** Fitted inference data is written to `data/mmm_idata.nc` (and a fingerprint file) so later launches reload the posterior instead of resampling unless you refit or invalidate the cache, to save on (re)loading time.
+**Caching:** Fitted inference data is written to `data/mmm_idata.nc` with a fingerprint file so later launches reload the posterior instead of resampling unless you refit or invalidate the cache.
 
 ## Pages
 
 | Route | Purpose |
 |--------|---------|
-| **Overview** | In-sample KPIs, recent in-sample diagnostics, revenue vs. baseline/media decomp over time |
+| **Overview** | In-sample KPIs, actual vs. predicted revenue, revenue decomposition, MCMC diagnostics, residual checks and a fast holdout check |
 | **Contributions** | Channel contribution to revenue (posterior uncertainty) |
 | **Response curves** | Marginal response / saturation curves by channel |
 | **Optimiser** | Steady-state budget scenarios with optional channel min/max constraints |
 
-The **Options** panel in the header lets you adjust sampler settings like draws, tuning steps and target accept (with more to be added in the future) and trigger a refit. Successful runs persist settings to `data/mmm_sampler_config.json`.
+The **Options** panel in the header lets you adjust sampler settings like requested draws per chain, requested tuning steps per chain, target accept, and trigger a refit. Successful runs persist settings to `data/mmm_sampler_config.json`.
+
+## Project structure
+
+```text
+├── app.py                  # Dash entrypoint and callback registration
+├── callbacks/              # Dash callbacks by feature area
+├── components/             # Shared layout helpers, ids, KPI cards, chart theme
+├── content/                # Static explanatory copy, including methodology notes
+├── dashboard/              # App-level data loading, shared runtime state, and theme settings
+├── data/                   # Meridian sample data, sampler config, cached posterior
+├── figures/                # Plotly figure builders
+├── layouts/                # Page and shell layout builders
+├── model/                  # MMM fitting, posterior summaries, diagnostics, optimiser math
+├── pages/                  # Dash Pages registration and page entrypoints
+├── assets/                 # Dash-served CSS and fonts
+├── img/                    # README screenshots
+├── pyproject.toml          # Python dependencies and project metadata
+└── uv.lock                 # Locked dependency set for uv
+```
+
+The app is intentionally split by responsibility: `model/mmm.py` handles fitting and metric calculation, `figures/` turns model outputs into Plotly charts, `layouts/` builds Dash/Mantine UI, `pages/` registers routes with Dash Pages, and `callbacks/` wires user interactions.
+
+## Diagnostics notes
+
+The Overview page includes two different kinds of diagnostics:
+
+- **MCMC diagnostics** report sampler health and cache-related metadata. Requested sampler settings are shown separately from cached posterior draws per chain.
+- **Fast holdout check** is a lightweight temporal stress test, not a full Bayesian MMM backtest. It fits a ridge surrogate on prior weeks and forecasts short holdout windows, then compares the surrogate against simple naive benchmarks. Treat it as a smoke test for instability or short-term extrapolation, not as repeated Bayesian refits.
 
 ## To Add
 
 - Adding more user options to adjust MMM/sampler settings
 - Multi-geo / hierarchical geo modelling capability
+- Full rolling-origin Bayesian MMM refits for stronger validation
 
 ## Stack
 

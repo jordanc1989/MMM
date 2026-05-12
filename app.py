@@ -11,24 +11,27 @@ from callbacks.optimiser import register_optimiser_callbacks
 from callbacks.overview import register_overview_callbacks
 from callbacks.response_curves import register_response_curve_callbacks
 from callbacks.shell import register_shell_callbacks
-from components.ids import OPT_REFIT_BTN, REFIT_OVERLAY_STORE
+from components.ids import MODEL_REFRESH_STORE, OPT_REFIT_BTN, REFIT_OVERLAY_STORE
 from dashboard.data import build_model_cache
+from dashboard.state import set_model_cache
 from dashboard.theme import APP_TITLE
 from layouts.shell import build_shell
-from pages.contributions import (
-    register_contributions_callbacks,
-)
 
 
 def create_app() -> Dash:
     app = Dash(
         __name__,
+        use_pages=True,
         title=APP_TITLE,
         update_title=None,
         suppress_callback_exceptions=True,
+        routing_callback_inputs={
+            "model_refresh": Input(MODEL_REFRESH_STORE, "data"),
+        },
     )
 
     results_by_geo = build_model_cache()
+    set_model_cache(results_by_geo)
     app.layout = build_shell(results_by_geo["All"])
 
     app.clientside_callback(
@@ -48,6 +51,8 @@ def create_app() -> Dash:
 
     register_shell_callbacks(app, results_by_geo)
     register_overview_callbacks(app, results_by_geo)
+    from pages.contributions import register_contributions_callbacks
+
     register_contributions_callbacks(app, results_by_geo)
     register_response_curve_callbacks(app, results_by_geo)
     register_optimiser_callbacks(app, results_by_geo)
