@@ -1,4 +1,3 @@
-.cursor/
 .venv/
 __pycache__/
 .pytensor_cache/

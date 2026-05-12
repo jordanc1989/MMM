@@ -5,6 +5,10 @@ OVERVIEW_DATE_STORE = "overview-date-store"
 OVERVIEW_RANGE_PRESET = "overview-range-preset"
 OVERVIEW_YEAR_SELECT = "overview-year-select"
 OVERVIEW_TOOLBAR = "overview-toolbar"
+ACTUAL_PREDICTED_GRAPH_ID = "overview-actual-predicted-graph"
+OVERVIEW_KPI_GRID_ID = "overview-kpis"
+OVERVIEW_WATERFALL_ID = "overview-waterfall"
+OVERVIEW_RESIDUALS_ID = "overview-residuals"
 
 # Global model / NUTS options (header) + bump to refresh all pages after refit.
 MODEL_REFRESH_STORE = "model-refresh-store"

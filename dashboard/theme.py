@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 from data.loader import CHANNELS
 
 FONT_FAMILY = "DM Sans, sans-serif"
+APP_TITLE = "Bayesian MMM Dashboard"
 
 PALETTE: list[str] = [
     "#14b8a6",  # teal
@@ -37,6 +38,23 @@ CHART_FONT_COLOR = DARK_SCALE[0]
 GRID_COLOR = DARK_SCALE[6]
 ZERO_LINE_COLOR = DARK_SCALE[5]
 SURFACE_COLOR = DARK_SCALE[7]
+PAGE_MAX_WIDTH = "1440px"
+APP_MIN_HEIGHT_STYLE = {"minHeight": "100vh"}
+PAGE_CONTAINER_STYLE = {"maxWidth": PAGE_MAX_WIDTH, "margin": "0 auto"}
+OVERVIEW_TOOLBAR_STYLE = {
+    "maxWidth": PAGE_MAX_WIDTH,
+    "margin": "0 auto 16px auto",
+}
+REFIT_OVERLAY_STYLE = {
+    "position": "fixed",
+    "inset": 0,
+    "zIndex": 10000,
+    "alignItems": "center",
+    "justifyContent": "center",
+    "flexDirection": "column",
+    "backgroundColor": "rgba(10, 12, 16, 0.72)",
+    "backdropFilter": "blur(8px)",
+}
 
 
 def mantine_theme() -> dict:
@@ -96,4 +114,3 @@ def apply_dark_theme(fig: go.Figure, *, height: int | None = None) -> go.Figure:
         tickfont=dict(color=CHART_FONT_COLOR),
     )
     return fig
-
