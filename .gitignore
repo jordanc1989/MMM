@@ -2,3 +2,8 @@
 __pycache__/
 .pytensor_cache/
 .DS_Store
+.claude/
+
+# Local-only Hugging Face Space deploy tooling — kept out of the public repo.
+deploy-hf.sh
+.gitattributes

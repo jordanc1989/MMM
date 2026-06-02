@@ -1,0 +1,16 @@
+# Keep the build context small and reproducible. The pre-fitted posterior under
+# data/ is intentionally NOT ignored — it ships in the image so the app loads
+# from cache instead of resampling on every cold start.
+.git
+.gitattributes
+.venv
+**/__pycache__
+*.pyc
+.pytensor_cache
+.claude
+.DS_Store
+img/
+*.md
+!README.md
+Dockerfile
+.dockerignore
