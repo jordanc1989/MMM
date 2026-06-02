@@ -7,7 +7,17 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
-from dashboard.theme import apply_dark_theme
+from dashboard.theme import (
+    ACCENT,
+    CHART_FONT_COLOR,
+    DATA_INK,
+    FONT_FAMILY,
+    GRID_COLOR,
+    NEGATIVE_COLOR,
+    STEEL_COLOR,
+    apply_dark_theme,
+    with_alpha,
+)
 from data.loader import TREND_COLUMNS
 from model.mmm import ModelResult, posterior_predictive_interval_for_result
 
@@ -39,7 +49,7 @@ def actual_vs_predicted_chart(result: ModelResult) -> go.Figure:
                 mode="lines",
                 line=dict(width=0),
                 fill="tonexty",
-                fillcolor="rgba(45, 212, 191, 0.14)",
+                fillcolor=with_alpha(ACCENT, 0.12),
                 name="",
                 legendgroup="pp",
                 showlegend=False,
@@ -53,9 +63,9 @@ def actual_vs_predicted_chart(result: ModelResult) -> go.Figure:
             y=result.revenue,
             mode="lines",
             name="Actual",
-            line=dict(color="#64748b", width=2, shape="spline", smoothing=0.3),
+            line=dict(color=DATA_INK, width=1.8),
             fill="tozeroy",
-            fillcolor="rgba(100, 116, 139, 0.14)",
+            fillcolor=with_alpha(DATA_INK, 0.10),
         )
     )
     fig.add_trace(
@@ -64,7 +74,7 @@ def actual_vs_predicted_chart(result: ModelResult) -> go.Figure:
             y=result.fitted,
             mode="lines",
             name="Posterior mean fit",
-            line=dict(color="#2dd4bf", width=2.5, dash="dot", shape="spline", smoothing=0.3),
+            line=dict(color=ACCENT, width=2.2, dash="dot"),
         )
     )
     fig.update_layout(
@@ -117,10 +127,10 @@ def revenue_waterfall(result: ModelResult) -> go.Figure:
             y=values,
             text=[f"${v/1e6:,.1f}M" for v in values],
             textposition="outside",
-            connector=dict(line=dict(color="#3a3f47", width=1)),
-            increasing=dict(marker=dict(color="#14b8a6")),
-            decreasing=dict(marker=dict(color="#ef4444")),
-            totals=dict(marker=dict(color="#38bdf8")),
+            connector=dict(line=dict(color=GRID_COLOR, width=1)),
+            increasing=dict(marker=dict(color=ACCENT)),
+            decreasing=dict(marker=dict(color=NEGATIVE_COLOR)),
+            totals=dict(marker=dict(color=STEEL_COLOR)),
         )
     )
     fig.update_layout(yaxis_tickprefix="$", yaxis_tickformat=".2s", showlegend=False)
@@ -165,9 +175,9 @@ def residuals_diagnostic_figure(result: ModelResult) -> go.Figure:
             y=residuals,
             mode="lines",
             name="Residuals",
-            line=dict(color="#2dd4bf", width=1.5, shape="spline", smoothing=0.3),
+            line=dict(color=ACCENT, width=1.4),
             fill="tozeroy",
-            fillcolor="rgba(45, 212, 191, 0.18)",
+            fillcolor=with_alpha(ACCENT, 0.14),
             hovertemplate="%{x|%b %d, %Y}<br>%{y:$,.0f}<extra></extra>",
         ),
         row=1,
@@ -175,7 +185,7 @@ def residuals_diagnostic_figure(result: ModelResult) -> go.Figure:
     )
     fig.add_hline(
         y=0,
-        line=dict(color="#3a3f47", width=1, dash="dot"),
+        line=dict(color=GRID_COLOR, width=1, dash="dot"),
         row=1,
         col=1,
     )
@@ -185,7 +195,7 @@ def residuals_diagnostic_figure(result: ModelResult) -> go.Figure:
             x=list(range(1, n_lags + 1)),
             y=acf_vals,
             name="ACF",
-            marker=dict(color="#38bdf8"),
+            marker=dict(color=STEEL_COLOR),
             hovertemplate="Lag %{x}<br>ρ=%{y:.2f}<extra></extra>",
         ),
         row=2,
@@ -193,13 +203,13 @@ def residuals_diagnostic_figure(result: ModelResult) -> go.Figure:
     )
     fig.add_hline(
         y=band,
-        line=dict(color="#64748b", width=1, dash="dash"),
+        line=dict(color=DATA_INK, width=1, dash="dash"),
         row=2,
         col=1,
     )
     fig.add_hline(
         y=-band,
-        line=dict(color="#64748b", width=1, dash="dash"),
+        line=dict(color=DATA_INK, width=1, dash="dash"),
         row=2,
         col=1,
     )
@@ -210,6 +220,6 @@ def residuals_diagnostic_figure(result: ModelResult) -> go.Figure:
     fig.update_xaxes(title="Lag (weeks)", row=2, col=1)
     fig.update_layout(showlegend=False)
     for annotation in fig["layout"]["annotations"]:
-        annotation["font"] = dict(family="DM Sans, sans-serif", color="#d4d6d9", size=13)
+        annotation["font"] = dict(family=FONT_FAMILY, color=CHART_FONT_COLOR, size=13)
 
     return apply_dark_theme(fig, height=360)

@@ -6,7 +6,15 @@ import dash_mantine_components as dmc
 from dash import dcc
 from dash_iconify import DashIconify
 
-from components import CHANNEL_COLORS, kpi_card, page_header, section
+from components import (
+    CHANNEL_COLORS,
+    NEGATIVE_COLOR,
+    POSITIVE_COLOR,
+    fmt_currency,
+    kpi_card,
+    page_header,
+    section,
+)
 from figures.optimiser import _allocation_donut
 from model.mmm import (
     ModelResult,
@@ -37,16 +45,6 @@ ALLOC_PROPOSED_GRAPH_ID = "budget-alloc-proposed-pie"
 ALLOC_RECOMMENDED_GRAPH_ID = "budget-alloc-recommended-pie"
 
 
-def _fmt_currency(v: float) -> str:
-    if abs(v) >= 1e9:
-        return f"${v/1e9:.2f}B"
-    if abs(v) >= 1e6:
-        return f"${v/1e6:.2f}M"
-    if abs(v) >= 1e3:
-        return f"${v/1e3:.1f}K"
-    return f"${v:,.0f}"
-
-
 def _fmt_pct(v: float) -> str:
     return f"{v * 100:.0f}%"
 
@@ -58,9 +56,9 @@ def _current_weekly_alloc(result: ModelResult) -> dict[str, float]:
 def _support_status(result: ModelResult, channel: str, weekly_spend: float) -> tuple[str, str]:
     p5, p95 = observed_spend_support(result, channel)
     if weekly_spend < p5:
-        return f"Below P5 ({_fmt_currency(p5)}/wk)", "orange"
+        return f"Below P5 ({fmt_currency(p5)}/wk)", "orange"
     if weekly_spend > p95:
-        return f"Above P95 ({_fmt_currency(p95)}/wk)", "orange"
+        return f"Above P95 ({fmt_currency(p95)}/wk)", "orange"
     return "Inside P5-P95", "dimmed"
 
 
@@ -144,7 +142,7 @@ def _channel_row(channel: str, weight: float, weekly_amount: float) -> dmc.Stack
                                 className="mmm-numeric",
                             ),
                             dmc.Text(
-                                _fmt_currency(weekly_amount) + " / week",
+                                fmt_currency(weekly_amount) + " / week",
                                 size="sm",
                                 fw=600,
                                 id={**ALLOC_LABEL_ID, "channel": channel},
@@ -160,7 +158,7 @@ def _channel_row(channel: str, weight: float, weekly_amount: float) -> dmc.Stack
                 max=100,
                 step=0.1,
                 value=weight,
-                color="teal",
+                color="ochre",
                 marks=[{"value": v, "label": ""} for v in (0, 25, 50, 75, 100)],
                 size="md",
                 radius="xl",
@@ -188,7 +186,7 @@ def _constraint_row(channel: str, current_weekly: float) -> dmc.TableTr:
             ),
             dmc.TableTd(
                 dmc.Text(
-                    _fmt_currency(current_weekly) + " / week",
+                    fmt_currency(current_weekly) + " / week",
                     size="sm",
                     className="mmm-numeric",
                 )
@@ -262,7 +260,7 @@ def _roi_rows(
         cur_roi = cur_rev / cur_spend_total if cur_spend_total > 0 else 0.0
         opt_roi = opt_rev / opt_spend_total if opt_spend_total > 0 else 0.0
         delta_rev = opt_rev - cur_rev
-        delta_color = "teal" if delta_rev >= 0 else "red"
+        delta_color = POSITIVE_COLOR if delta_rev >= 0 else NEGATIVE_COLOR
         delta_icon = "tabler:trending-up" if delta_rev >= 0 else "tabler:trending-down"
         support_label, support_color = _support_status(result, c, optimised_alloc[c])
         rows.append(
@@ -282,8 +280,8 @@ def _roi_rows(
                             ],
                         )
                     ),
-                    dmc.TableTd(dmc.Text(_fmt_currency(cur_spend_total), size="sm", className="mmm-numeric")),
-                    dmc.TableTd(dmc.Text(_fmt_currency(opt_spend_total), size="sm", className="mmm-numeric")),
+                    dmc.TableTd(dmc.Text(fmt_currency(cur_spend_total), size="sm", className="mmm-numeric")),
+                    dmc.TableTd(dmc.Text(fmt_currency(opt_spend_total), size="sm", className="mmm-numeric")),
                     dmc.TableTd(dmc.Text(support_label, size="sm", c=support_color)),
                     dmc.TableTd(dmc.Text(f"{cur_roi:.2f}x", size="sm", className="mmm-numeric")),
                     dmc.TableTd(
@@ -291,7 +289,7 @@ def _roi_rows(
                             f"{opt_roi:.2f}x",
                             size="sm",
                             fw=600,
-                            c="teal" if opt_roi >= cur_roi else "orange",
+                            c=POSITIVE_COLOR if opt_roi >= cur_roi else NEGATIVE_COLOR,
                             className="mmm-numeric",
                         )
                     ),
@@ -302,10 +300,10 @@ def _roi_rows(
                                 DashIconify(
                                     icon=delta_icon,
                                     width=14,
-                                    color="#14b8a6" if delta_rev >= 0 else "#ef4444",
+                                    color=POSITIVE_COLOR if delta_rev >= 0 else NEGATIVE_COLOR,
                                 ),
                                 dmc.Text(
-                                    ("+" if delta_rev >= 0 else "") + _fmt_currency(delta_rev),
+                                    ("+" if delta_rev >= 0 else "") + fmt_currency(delta_rev),
                                     size="sm",
                                     fw=600,
                                     c=delta_color,
@@ -376,99 +374,59 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
 
     predicted_kpi = dmc.Paper(
         p="lg",
-        radius="md",
-        shadow="sm",
+        radius="sm",
         withBorder=False,
         className="mmm-paper",
-        children=dmc.Group(
-            justify="space-between",
-            align="flex-start",
-            wrap="nowrap",
+        children=dmc.Stack(
+            gap=8,
             children=[
-                dmc.Stack(
-                    gap=6,
-                    children=[
-                        dmc.Text(
-                            "Predicted revenue",
-                            size="xs",
-                            c="dimmed",
-                            tt="uppercase",
-                            fw=600,
-                        ),
-                        dmc.Text(
-                            _fmt_currency(total_rev),
-                            size="xl",
-                            fw=700,
-                            id=PREDICTED_REV_ID,
-                            className="mmm-numeric",
-                        ),
-                        dmc.Text(
-                            f"94% HDI {_fmt_currency(float(hdi_low))}–{_fmt_currency(float(hdi_high))}",
-                            size="xs",
-                            c="dimmed",
-                            id=PREDICTED_HDI_ID,
-                        ),
-                    ],
+                dmc.Text("Predicted revenue", className="mmm-eyebrow"),
+                dmc.Text(
+                    fmt_currency(total_rev),
+                    fz=28,
+                    fw=600,
+                    lh=1.1,
+                    id=PREDICTED_REV_ID,
+                    className="mmm-numeric",
                 ),
-                dmc.ThemeIcon(
-                    DashIconify(icon="tabler:cash", width=20),
-                    variant="light",
-                    color="teal",
-                    size="lg",
-                    radius="md",
+                dmc.Text(
+                    f"94% HDI {fmt_currency(float(hdi_low))}–{fmt_currency(float(hdi_high))}",
+                    size="xs",
+                    c="dimmed",
+                    id=PREDICTED_HDI_ID,
                 ),
             ],
         ),
     )
     uplift_kpi = dmc.Paper(
         p="lg",
-        radius="md",
-        shadow="sm",
+        radius="sm",
         withBorder=False,
         className="mmm-paper",
-        children=dmc.Group(
-            justify="space-between",
-            align="flex-start",
-            wrap="nowrap",
+        children=dmc.Stack(
+            gap=8,
             children=[
-                dmc.Stack(
-                    gap=6,
-                    children=[
-                        dmc.Text(
-                            "Uplift vs current",
-                            size="xs",
-                            c="dimmed",
-                            tt="uppercase",
-                            fw=600,
-                        ),
-                        dmc.Text(
-                            "+$0",
-                            size="xl",
-                            fw=700,
-                            id=UPLIFT_ID,
-                            className="mmm-numeric",
-                        ),
-                        dmc.Text(
-                            "Move the sliders to reallocate",
-                            size="xs",
-                            c="dimmed",
-                            id=UTILISATION_ID,
-                        ),
-                        dmc.Text(
-                            "P(proposed > current): 0%",
-                            size="xs",
-                            c="dimmed",
-                            id=UPLIFT_PROB_ID,
-                            className="mmm-numeric",
-                        ),
-                    ],
+                dmc.Text("Uplift vs current", className="mmm-eyebrow"),
+                dmc.Text(
+                    "+$0",
+                    fz=28,
+                    fw=600,
+                    lh=1.1,
+                    id=UPLIFT_ID,
+                    className="mmm-numeric",
                 ),
-                dmc.ThemeIcon(
-                    DashIconify(icon="tabler:trending-up", width=20),
-                    variant="light",
-                    color="teal",
-                    size="lg",
-                    radius="md",
+                dmc.Text(
+                    "Move the sliders to reallocate",
+                    size="xs",
+                    c="dimmed",
+                    id=UTILISATION_ID,
+                ),
+                dmc.Text(
+                    "P(proposed > current): 0%",
+                    size="xs",
+                    c="dimmed",
+                    id=UPLIFT_PROB_ID,
+                    className="mmm-numeric",
                 ),
             ],
         ),
@@ -480,10 +438,10 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
         children=[
             kpi_card(
                 label="Total weekly budget",
-                value=_fmt_currency(total_weekly),
+                value=fmt_currency(total_weekly),
                 icon="tabler:wallet",
                 helper=(
-                    f"Locked · {_fmt_currency(total_window)} over "
+                    f"Locked · {fmt_currency(total_window)} over "
                     f"{result.n_weeks}-week fit window"
                 ),
             ),
@@ -544,9 +502,9 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
                             "Re-run optimisation",
                             id=APPLY_MODEL_MIX_ID,
                             leftSection=DashIconify(
-                                icon="tabler:sparkles", width=14
+                                icon="tabler:player-play", width=14
                             ),
-                            color="teal",
+                            color="ochre",
                             variant="light",
                             size="xs",
                         ),
@@ -564,7 +522,7 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     alloc_charts = section(
         "Allocation mix",
         "Current weekly mix (from data), your proposed mix (sliders), and a model-suggested "
-        f"steady-state mix ({_fmt_currency(rec_rev)} at suggested mix; "
+        f"steady-state mix ({fmt_currency(rec_rev)} at suggested mix; "
         f"{rec_outside} channel{'s' if rec_outside != 1 else ''} outside observed P5-P95 support).",
         dmc.Grid(
             gutter="md",

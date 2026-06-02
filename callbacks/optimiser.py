@@ -6,6 +6,7 @@ import dash_mantine_components as dmc
 from dash import ALL, Input, Output, State, no_update
 from dash.exceptions import PreventUpdate
 
+from components import NEGATIVE_COLOR, POSITIVE_COLOR, fmt_currency
 from components.ids import MODEL_REFRESH_STORE
 from figures.optimiser import _allocation_donut
 from layouts.optimiser import (
@@ -28,7 +29,6 @@ from layouts.optimiser import (
     _constraint_dict,
     _current_weekly_alloc,
     _default_weights,
-    _fmt_currency,
     _fmt_pct,
     _fmt_weight,
     _outside_support_count,
@@ -89,8 +89,8 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
         cur_rev = float(current_summary["expected_revenue"])
         new_rev = float(posterior["expected_revenue"])
         uplift = new_rev - cur_rev
-        uplift_color = "teal" if uplift >= 0 else "red"
-        uplift_str = ("+" if uplift >= 0 else "") + _fmt_currency(uplift)
+        uplift_color = POSITIVE_COLOR if uplift >= 0 else NEGATIVE_COLOR
+        uplift_str = ("+" if uplift >= 0 else "") + fmt_currency(uplift)
         pct_change = (uplift / cur_rev * 100) if cur_rev else 0.0
         outside = _outside_support_count(result, new_alloc)
         support_note = (
@@ -103,7 +103,7 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
         threshold = float(posterior["uplift_threshold"])
         prob_line = (
             f"P(proposed > current): {_fmt_pct(float(posterior['prob_proposed_gt_current']))} · "
-            f"P(uplift > {_fmt_currency(threshold)}): "
+            f"P(uplift > {fmt_currency(threshold)}): "
             f"{_fmt_pct(float(posterior['prob_uplift_gt_threshold']))}"
         )
 
@@ -122,11 +122,11 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
         )
 
         weight_children = [_fmt_weight(w * 100.0) for w in weights_pct]
-        alloc_children = [_fmt_currency(new_alloc[c]) + " / week" for c in channels]
+        alloc_children = [fmt_currency(new_alloc[c]) + " / week" for c in channels]
 
         return (
-            _fmt_currency(new_rev),
-            f"94% HDI {_fmt_currency(float(hdi_low))}–{_fmt_currency(float(hdi_high))}",
+            fmt_currency(new_rev),
+            f"94% HDI {fmt_currency(float(hdi_low))}–{fmt_currency(float(hdi_high))}",
             uplift_str,
             uplift_color,
             utilisation,
@@ -174,7 +174,7 @@ def register_optimiser_callbacks(app, results_by_geo: dict[str, ModelResult]) ->
                 "Optimisation re-run with current constraints; "
                 f"{outside} channel{'s' if outside != 1 else ''} outside observed support.",
                 size="xs",
-                c="orange" if outside else "teal",
+                c="orange" if outside else POSITIVE_COLOR,
             )
             fig = _allocation_donut(
                 result.channels,

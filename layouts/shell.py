@@ -23,13 +23,14 @@ from components.ids import (
 from content.methodology import REFIT_OVERLAY_DESCRIPTION, REFIT_OVERLAY_TITLE
 from dashboard.data import overview_date_store
 from dashboard.theme import (
+    ACCENT,
     APP_MIN_HEIGHT_STYLE,
     PAGE_CONTAINER_STYLE,
     REFIT_OVERLAY_STYLE,
     mantine_theme,
 )
 from layouts.overview import build_overview_toolbar
-from model.mmm import ModelResult
+from model.mmm import ModelResult, load_sampler_config
 
 
 def nav_pages() -> list[dict]:
@@ -51,16 +52,17 @@ def _nav_link(page: dict) -> dmc.NavLink:
         ),
         href=page.get("relative_path", path),
         active=False,
-        variant="light",
-        color="teal",
+        variant="subtle",
+        color="gray",
     )
 
 
 def header(result: ModelResult) -> dmc.AppShellHeader:
+    defaults = load_sampler_config()
     sc = result.sampler_config or {}
-    ta = float(sc.get("target_accept", 0.99))
-    draws = int(sc.get("draws", 1500))
-    tune = int(sc.get("tune", 3000))
+    ta = float(sc.get("target_accept", defaults["target_accept"]))
+    draws = int(sc.get("draws", defaults["draws"]))
+    tune = int(sc.get("tune", defaults["tune"]))
 
     return dmc.AppShellHeader(
         px="lg",
@@ -69,26 +71,19 @@ def header(result: ModelResult) -> dmc.AppShellHeader:
             justify="space-between",
             align="center",
             children=[
-                dmc.Group(
-                    gap="sm",
+                dmc.Stack(
+                    gap=0,
                     children=[
-                        dmc.ThemeIcon(
-                            DashIconify(icon="tabler:chart-histogram", width=18),
-                            variant="light",
-                            color="teal",
-                            size="lg",
-                            radius="md",
+                        dmc.Text(
+                            "Bayesian Media Mix Model",
+                            fw=600,
+                            fz="lg",
+                            className="mmm-serif",
                         ),
-                        dmc.Stack(
-                            gap=0,
-                            children=[
-                                dmc.Text("Bayesian Media Mix Model", fw=700, size="md"),
-                                dmc.Text(
-                                    f"{result.geo}, weekly simulated Meridian data",
-                                    size="xs",
-                                    c="dimmed",
-                                ),
-                            ],
+                        dmc.Text(
+                            f"{result.geo} · weekly simulated Meridian data",
+                            size="xs",
+                            c="dimmed",
                         ),
                     ],
                 ),
@@ -157,7 +152,7 @@ def header(result: ModelResult) -> dmc.AppShellHeader:
                                             dmc.Button(
                                                 "Apply & refit",
                                                 id=OPT_REFIT_BTN,
-                                                color="teal",
+                                                color="ochre",
                                                 variant="filled",
                                                 size="sm",
                                                 fullWidth=True,
@@ -170,19 +165,11 @@ def header(result: ModelResult) -> dmc.AppShellHeader:
                                 ),
                             ],
                         ),
-                        dmc.Badge(
-                            result.geo,
-                            color="gray",
-                            variant="light",
-                            radius="sm",
-                            leftSection=DashIconify(icon="tabler:map-pin", width=12),
-                        ),
-                        dmc.Badge(
-                            "Demo",
-                            color="teal",
-                            variant="light",
-                            radius="sm",
-                            leftSection=DashIconify(icon="tabler:flask", width=12),
+                        dmc.Text(
+                            f"{result.geo} · demo",
+                            size="xs",
+                            c="dimmed",
+                            className="mmm-numeric",
                         ),
                     ],
                 ),
@@ -230,7 +217,7 @@ def refit_progress_placeholder() -> dmc.Stack:
                 value=None,
                 striped=True,
                 animated=True,
-                color="teal",
+                color="ochre",
                 size="sm",
                 radius="xl",
             ),
@@ -248,12 +235,12 @@ def refit_progress_from_snapshot(snapshot: dict | None) -> dmc.Stack:
         return dmc.Stack(
             gap=6,
             children=[
-                dmc.Text("NUTS sampling (nutpie / JAX)...", size="xs", c="teal"),
+                dmc.Text("NUTS sampling (nutpie / JAX)...", size="xs", c=ACCENT),
                 dmc.Progress(
                     value=None,
                     striped=True,
                     animated=True,
-                    color="teal",
+                    color="ochre",
                     size="sm",
                     radius="xl",
                 ),
@@ -272,13 +259,13 @@ def refit_progress_from_snapshot(snapshot: dict | None) -> dmc.Stack:
                 dmc.Text(
                     "Posterior predictive sampling...",
                     size="xs",
-                    c="teal",
+                    c=ACCENT,
                 ),
                 dmc.Progress(
                     value=None,
                     striped=True,
                     animated=True,
-                    color="teal",
+                    color="ochre",
                     size="sm",
                     radius="xl",
                 ),
@@ -304,7 +291,7 @@ def refit_progress_from_snapshot(snapshot: dict | None) -> dmc.Stack:
                             dmc.Text(f"{pct:.0f}%", size="xs", c="dimmed"),
                         ],
                     ),
-                    dmc.Progress(value=pct, color="teal", size="sm", radius="xl"),
+                    dmc.Progress(value=pct, color="ochre", size="sm", radius="xl"),
                 ],
             )
         )
@@ -352,7 +339,7 @@ def refit_overlay_root() -> dmc.Box:
                                     ),
                                 ],
                             ),
-                            dmc.Loader(color="teal", size="md", type="oval"),
+                            dmc.Loader(color="ochre", size="md", type="oval"),
                         ],
                     ),
                     dmc.Stack(

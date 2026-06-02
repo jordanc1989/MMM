@@ -15,7 +15,19 @@ import dash
 from dash import Input, Output, dcc
 from dash.exceptions import PreventUpdate
 
-from components import CHANNEL_COLORS, apply_dark_theme, page_header, section
+from components import (
+    ACCENT,
+    CHANNEL_COLORS,
+    DATA_INK,
+    NEGATIVE_COLOR,
+    POSITIVE_COLOR,
+    STEEL_COLOR,
+    apply_dark_theme,
+    fmt_currency,
+    page_header,
+    section,
+    with_alpha,
+)
 from components.ids import MODEL_REFRESH_STORE
 from dashboard.state import current_result
 from model.mmm import (
@@ -82,7 +94,7 @@ def contributions_area_chart(result: ModelResult) -> go.Figure:
                 mode="lines",
                 line=dict(width=0),
                 fill="tonexty",
-                fillcolor="rgba(45, 212, 191, 0.12)",
+                fillcolor=with_alpha(ACCENT, 0.12),
                 name="",
                 legendgroup="hdi",
                 showlegend=False,
@@ -97,7 +109,7 @@ def contributions_area_chart(result: ModelResult) -> go.Figure:
             mode="lines",
             name="Baseline",
             line=dict(width=0),
-            fillcolor="rgba(138, 143, 151, 0.25)",
+            fillcolor=with_alpha(DATA_INK, 0.30),
             fill="tozeroy",
             hovertemplate="Baseline: $%{customdata:,.0f}<extra></extra>",
             customdata=edges[0],
@@ -176,14 +188,14 @@ def roi_vs_marginal_chart(result: ModelResult) -> go.Figure:
             name="Window ROAS (mean ± 94% HDI)",
             x=chans,
             y=means,
-            marker_color="#2dd4bf",
+            marker_color=ACCENT,
             error_y=dict(
                 type="data",
                 symmetric=False,
                 array=err_hi,
                 arrayminus=err_lo,
                 thickness=1.2,
-                color="#94a3b8",
+                color=DATA_INK,
             ),
             hovertemplate="%{x}<br>ROAS %{y:.2f}x<extra></extra>",
         )
@@ -193,7 +205,7 @@ def roi_vs_marginal_chart(result: ModelResult) -> go.Figure:
             name="Marginal ROAS (slope)",
             x=chans,
             y=slopes,
-            marker_color="#38bdf8",
+            marker_color=STEEL_COLOR,
             hovertemplate="%{x}<br>Marginal %{y:.2f}x<extra></extra>",
         )
     )
@@ -207,16 +219,6 @@ def roi_vs_marginal_chart(result: ModelResult) -> go.Figure:
 
 
 # ---------- table ----------------------------------------------------------
-
-
-def _fmt_currency(v: float) -> str:
-    if abs(v) >= 1e9:
-        return f"${v/1e9:.2f}B"
-    if abs(v) >= 1e6:
-        return f"${v/1e6:.2f}M"
-    if abs(v) >= 1e3:
-        return f"${v/1e3:.1f}K"
-    return f"${v:,.0f}"
 
 
 def channel_table(result: ModelResult) -> dmc.Table:
@@ -245,10 +247,10 @@ def channel_table(result: ModelResult) -> dmc.Table:
                         )
                     ),
                     dmc.TableTd(
-                        dmc.Text(_fmt_currency(spend), size="sm", className="mmm-numeric"),
+                        dmc.Text(fmt_currency(spend), size="sm", className="mmm-numeric"),
                     ),
                     dmc.TableTd(
-                        dmc.Text(_fmt_currency(contrib), size="sm", className="mmm-numeric"),
+                        dmc.Text(fmt_currency(contrib), size="sm", className="mmm-numeric"),
                     ),
                     dmc.TableTd(
                         dmc.Text(f"{share:.1f}%", size="sm", className="mmm-numeric"),
@@ -258,7 +260,7 @@ def channel_table(result: ModelResult) -> dmc.Table:
                             f"{roi:.2f}x",
                             size="sm",
                             fw=600,
-                            c="teal" if roi >= 1 else "orange",
+                            c=POSITIVE_COLOR if roi >= 1 else NEGATIVE_COLOR,
                             className="mmm-numeric",
                         ),
                     ),

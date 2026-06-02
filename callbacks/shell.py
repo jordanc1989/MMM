@@ -21,7 +21,7 @@ from components.ids import (
     REFIT_POLL_INTERVAL,
     REFIT_PROGRESS_CHAINS,
 )
-from dashboard.theme import REFIT_OVERLAY_STYLE
+from dashboard.theme import POSITIVE_COLOR, REFIT_OVERLAY_STYLE
 from data.loader import aggregate_geo, load_meridian, select_demo_geo
 from layouts.shell import nav_pages, refit_progress_from_snapshot
 from model.mmm import ModelResult, fit_surrogate, save_sampler_config
@@ -172,7 +172,7 @@ def register_shell_callbacks(app, results_by_geo: dict[str, ModelResult]) -> Non
         status = dmc.Stack(
             gap=4,
             children=[
-                dmc.Text("Refit complete.", size="xs", c="teal"),
+                dmc.Text("Refit complete.", size="xs", c=POSITIVE_COLOR),
                 dmc.Text(
                     "Charts reloaded. Sampling settings saved to data/mmm_sampler_config.json.",
                     size="xs",

@@ -6,7 +6,15 @@ import dash_mantine_components as dmc
 import pandas as pd
 from dash import dcc
 
-from components import kpi_card, page_header, section
+from components import (
+    NEGATIVE_COLOR,
+    POSITIVE_COLOR,
+    fmt_currency,
+    fmt_pct,
+    kpi_card,
+    page_header,
+    section,
+)
 from components.ids import (
     ACTUAL_PREDICTED_GRAPH_ID,
     OVERVIEW_DATE_STORE,
@@ -127,22 +135,6 @@ def mcmc_diagnostics_panel(result: ModelResult) -> dmc.Stack:
 # ---------- layout helpers -------------------------------------------------
 
 
-def _fmt_currency(v: float) -> str:
-    if abs(v) >= 1e9:
-        return f"${v/1e9:.2f}B"
-    if abs(v) >= 1e6:
-        return f"${v/1e6:.1f}M"
-    if abs(v) >= 1e3:
-        return f"${v/1e3:.1f}K"
-    return f"${v:,.0f}"
-
-
-def _fmt_pct_opt(x: float | int | None) -> str:
-    if x is None:
-        return "—"
-    return f"{float(x) * 100:.1f}%"
-
-
 def _bounds(base: ModelResult) -> tuple[pd.Timestamp, pd.Timestamp]:
     d = pd.to_datetime(base.dates)
     return pd.Timestamp(d.min()), pd.Timestamp(d.max())
@@ -195,7 +187,7 @@ def _yoy_pct_line(curr: float, prior: float) -> tuple[str | None, str]:
         return None, "dimmed"
     pct = (curr - prior) / prior * 100.0
     s = f"YoY {'+' if pct >= 0 else ''}{pct:.1f}%"
-    return s, "teal" if pct >= 0 else "red"
+    return s, POSITIVE_COLOR if pct >= 0 else NEGATIVE_COLOR
 
 
 def _yoy_roas_line(curr: float, prior: float) -> tuple[str | None, str]:
@@ -203,7 +195,7 @@ def _yoy_roas_line(curr: float, prior: float) -> tuple[str | None, str]:
     if abs(d) < 1e-12 and curr == 0 and prior == 0:
         return None, "dimmed"
     s = f"YoY {'+' if d >= 0 else ''}{d:.2f}x"
-    return s, "teal" if d >= 0 else "red"
+    return s, POSITIVE_COLOR if d >= 0 else NEGATIVE_COLOR
 
 
 def _build_kpi_grid(
@@ -256,7 +248,7 @@ def _build_kpi_grid(
             ),
             kpi_card(
                 label="Recent in-sample MAPE",
-                value=_fmt_pct_opt(temporal.get("recent_mape")),
+                value=fmt_pct(temporal.get("recent_mape")),
                 icon="tabler:calendar-stats",
                 helper=(
                     f"Last {recent_weeks} weeks from {recent_start}"
@@ -266,7 +258,7 @@ def _build_kpi_grid(
             ),
             kpi_card(
                 label="Total revenue (observed)",
-                value=_fmt_currency(total_rev),
+                value=fmt_currency(total_rev),
                 icon="tabler:currency-dollar",
                 helper=f"Paid-media share of observed {paid_share*100:.1f}%",
                 yoy=yoy_rev,
@@ -274,7 +266,7 @@ def _build_kpi_grid(
             ),
             kpi_card(
                 label="Total media spend",
-                value=_fmt_currency(total_spend),
+                value=fmt_currency(total_spend),
                 icon="tabler:credit-card",
                 helper="Sum of paid channel spend in period",
                 yoy=yoy_spend,
@@ -282,7 +274,7 @@ def _build_kpi_grid(
             ),
             kpi_card(
                 label="Attributed revenue (paid)",
-                value=_fmt_currency(attrib_paid),
+                value=fmt_currency(attrib_paid),
                 icon="tabler:chart-area",
                 helper="Posterior mean channel contributions",
                 yoy=yoy_attrib,
@@ -342,25 +334,25 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
             [
                 dmc.TableTd(dmc.Text(str(row["method"]), size="sm")),
                 dmc.TableTd(
-                    dmc.Text(_fmt_pct_opt(row["mape"]), size="sm", className="mmm-numeric")
+                    dmc.Text(fmt_pct(row["mape"]), size="sm", className="mmm-numeric")
                 ),
                 dmc.TableTd(
                     dmc.Text(
-                        _fmt_currency(float(row["rmse"] or 0.0)),
+                        fmt_currency(float(row["rmse"] or 0.0)),
                         size="sm",
                         className="mmm-numeric",
                     )
                 ),
                 dmc.TableTd(
                     dmc.Text(
-                        _fmt_pct_opt(row["bias"]),
+                        fmt_pct(row["bias"]),
                         size="sm",
                         className="mmm-numeric",
                     )
                 ),
                 dmc.TableTd(
                     dmc.Text(
-                        _fmt_pct_opt(row.get("coverage")),
+                        fmt_pct(row.get("coverage")),
                         size="sm",
                         className="mmm-numeric",
                     )
@@ -381,10 +373,10 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
                 ],
             )
             for label, value in [
-                ("Surrogate MAPE", _fmt_pct_opt(bt.get("mape"))),
-                ("Surrogate RMSE", _fmt_currency(float(bt.get("rmse") or 0.0))),
-                ("Forecast bias", _fmt_pct_opt(bt.get("bias"))),
-                ("Surrogate interval coverage", _fmt_pct_opt(bt.get("coverage"))),
+                ("Surrogate MAPE", fmt_pct(bt.get("mape"))),
+                ("Surrogate RMSE", fmt_currency(float(bt.get("rmse") or 0.0))),
+                ("Forecast bias", fmt_pct(bt.get("bias"))),
+                ("Surrogate interval coverage", fmt_pct(bt.get("coverage"))),
             ]
         ],
     )
@@ -401,21 +393,21 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
                     dmc.Text(str(row["train_weeks"]), size="sm", className="mmm-numeric")
                 ),
                 dmc.TableTd(
-                    dmc.Text(_fmt_pct_opt(row["mape"]), size="sm", className="mmm-numeric")
+                    dmc.Text(fmt_pct(row["mape"]), size="sm", className="mmm-numeric")
                 ),
                 dmc.TableTd(
                     dmc.Text(
-                        _fmt_currency(float(row["rmse"])),
+                        fmt_currency(float(row["rmse"])),
                         size="sm",
                         className="mmm-numeric",
                     )
                 ),
                 dmc.TableTd(
-                    dmc.Text(_fmt_pct_opt(row["bias"]), size="sm", className="mmm-numeric")
+                    dmc.Text(fmt_pct(row["bias"]), size="sm", className="mmm-numeric")
                 ),
                 dmc.TableTd(
                     dmc.Text(
-                        _fmt_pct_opt(row["coverage"]),
+                        fmt_pct(row["coverage"]),
                         size="sm",
                         className="mmm-numeric",
                     )
@@ -438,12 +430,12 @@ def backtest_panel(result: ModelResult) -> dmc.Stack:
             ),
             dmc.Alert(
                 (
-                    f"{signal}: MAPE is {_fmt_pct_opt(bt.get('mape'))}, average bias is "
-                    f"{_fmt_pct_opt(bt.get('bias'))} ({bias_direction}), and the nominal "
-                    f"94% surrogate interval covers {_fmt_pct_opt(bt.get('coverage'))} "
+                    f"{signal}: MAPE is {fmt_pct(bt.get('mape'))}, average bias is "
+                    f"{fmt_pct(bt.get('bias'))} ({bias_direction}), and the nominal "
+                    f"94% surrogate interval covers {fmt_pct(bt.get('coverage'))} "
                     "of holdout observations."
                 ),
-                color="yellow" if signal.startswith("The surrogate struggles") else "teal",
+                color="yellow" if signal.startswith("The surrogate struggles") else "ochre",
                 variant="light",
                 title="Surrogate forecast check",
             ),
@@ -532,7 +524,7 @@ def build_overview_toolbar(result: ModelResult) -> dmc.Box:
                                 {"value": "year", "label": "Year"},
                             ],
                             size="sm",
-                            color="teal",
+                            color="ochre",
                             persistence=True,
                             persistence_type="session",
                         ),

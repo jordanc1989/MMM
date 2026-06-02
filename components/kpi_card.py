@@ -1,49 +1,38 @@
-"""Reusable KPI card component."""
+"""Reusable KPI card component (flat, editorial)."""
 
 from __future__ import annotations
 
 import dash_mantine_components as dmc
-from dash import html
-from dash_iconify import DashIconify
 
 
 def kpi_card(
     *,
     label: str,
     value: str,
-    icon: str,
+    icon: str | None = None,
     helper: str | None = None,
     sub: str | None = None,
     yoy: str | None = None,
     yoy_color: str = "dimmed",
-    accent: str = "teal",
+    accent: str = "ochre",
 ) -> dmc.Paper:
-    """A shadow-elevated paper showing a labelled metric with a Tabler icon.
+    """A flat, hairline-bordered metric panel: small-caps label over a mono value.
 
     Args:
-        label: uppercase caption displayed above the value.
-        value: the primary numeric or text value.
-        icon: Tabler icon slug (e.g. `tabler:chart-bar`).
+        label: small-caps caption displayed above the value.
+        value: the primary numeric or text value (rendered in the mono face).
+        icon: accepted for call-site compatibility; no longer rendered.
         helper: optional secondary line rendered under the value.
         sub: optional tertiary dimmed line (used e.g. for HDI bands).
         yoy: optional year-over-year line (e.g. ``YoY +4.2%``).
-        yoy_color: Mantine color name for ``yoy`` (e.g. ``teal``, ``red``, ``dimmed``).
-        accent: Mantine color used for the ThemeIcon.
+        yoy_color: Mantine colour name or hex for ``yoy``.
+        accent: accepted for call-site compatibility; no longer rendered.
     """
+    del icon, accent  # retained in the signature for call-site compatibility
+
     body: list = [
-        dmc.Text(
-            label,
-            size="xs",
-            c="dimmed",
-            tt="uppercase",
-            fw=600,
-        ),
-        dmc.Text(
-            value,
-            size="xl",
-            fw=700,
-            className="mmm-numeric",
-        ),
+        dmc.Text(label, className="mmm-eyebrow"),
+        dmc.Text(value, fz=28, fw=600, lh=1.1, className="mmm-numeric"),
     ]
     if helper:
         body.append(dmc.Text(helper, size="xs", c="dimmed"))
@@ -56,23 +45,8 @@ def kpi_card(
 
     return dmc.Paper(
         p="lg",
-        radius="md",
-        shadow="sm",
+        radius="sm",
         withBorder=False,
         className="mmm-paper",
-        children=dmc.Group(
-            justify="space-between",
-            align="flex-start",
-            wrap="nowrap",
-            children=[
-                dmc.Stack(children=body, gap=6),
-                dmc.ThemeIcon(
-                    DashIconify(icon=icon, width=20),
-                    variant="light",
-                    color=accent,
-                    size="lg",
-                    radius="md",
-                ),
-            ],
-        ),
+        children=dmc.Stack(children=body, gap=8),
     )

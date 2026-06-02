@@ -1,7 +1,6 @@
 """WSGI entrypoint for production servers and Hugging Face Spaces.
 
-Dash wraps a Flask app, which is what a WSGI server actually serves. This module
-builds the app once on import and exposes that Flask instance as ``server`` so it
+Builds the app once on import and exposes that Flask instance as ``server`` so it
 can be run with, e.g.::
 
     gunicorn wsgi:server --bind 0.0.0.0:7860

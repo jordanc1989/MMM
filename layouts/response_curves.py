@@ -6,20 +6,13 @@ import dash_mantine_components as dmc
 import numpy as np
 from dash import dcc
 
-from components import page_header, section
+from components import fmt_currency, page_header, section
 from figures.response_curves import response_curve_figure
 from model.mmm import ModelResult, observed_spend_support, response_curve
 
 CHANNEL_SELECT_ID = "response-curve-channel"
 CHANNEL_GRAPH_ID = "response-curve-graph"
 CHANNEL_STATS_ID = "response-curve-stats"
-
-def _fmt_currency(v: float) -> str:
-    if abs(v) >= 1e6:
-        return f"${v/1e6:.2f}M"
-    if abs(v) >= 1e3:
-        return f"${v/1e3:.1f}K"
-    return f"${v:,.0f}"
 
 
 def response_stats(result: ModelResult, channel: str) -> dmc.SimpleGrid:
@@ -39,10 +32,10 @@ def response_stats(result: ModelResult, channel: str) -> dmc.SimpleGrid:
     headroom = max(0.0, (sat_90 - current) / current) if current > 0 else 0.0
 
     stats = [
-        ("Avg weekly spend", _fmt_currency(current)),
-        ("Current weekly contribution", _fmt_currency(cur_weekly_rev)),
+        ("Avg weekly spend", fmt_currency(current)),
+        ("Current weekly contribution", fmt_currency(cur_weekly_rev)),
         ("Marginal ROAS at avg spend", f"{marginal_roas:.2f}x"),
-        ("Observed spend range", f"{_fmt_currency(support_p5)}–{_fmt_currency(support_p95)}"),
+        ("Observed spend range", f"{fmt_currency(support_p5)}–{fmt_currency(support_p95)}"),
         ("Headroom to 90% saturation", f"{headroom*100:,.0f}%" if current > 0 else "—"),
     ]
     return dmc.SimpleGrid(

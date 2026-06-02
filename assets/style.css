@@ -7,39 +7,69 @@ body,
   letter-spacing: 0;
 }
 
+/* Serif headings carry the editorial hierarchy. */
+.mantine-Title-root,
+.mmm-serif {
+  font-family: var(--mmm-serif) !important;
+  letter-spacing: -0.01em;
+}
+
 .js-plotly-plot,
 .js-plotly-plot * {
   font-family: var(--mmm-font) !important;
 }
 
 .mmm-numeric {
+  font-family: var(--mmm-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0;
+  letter-spacing: -0.01em;
+}
+
+/* Small-caps section/metric labels. */
+.mmm-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--mmm-muted);
+}
+
+.mantine-NavLink-root {
+  border-left: 2px solid transparent;
+  border-radius: 0;
 }
 
 .mantine-NavLink-root[data-active] {
-  background-color: rgba(20, 184, 166, 0.08);
+  background-color: transparent;
+  border-left-color: var(--mmm-accent);
 }
 
+/* Flat, hairline-bordered surfaces replace floating shadow cards. */
 .mmm-paper {
-  transition:
-    transform 120ms ease,
-    box-shadow 120ms ease;
+  background-color: var(--mmm-surface) !important;
+  border: 1px solid var(--mmm-border) !important;
+  box-shadow: none !important;
+  transition: border-color 140ms ease;
 }
 
 .mmm-paper:hover {
-  transform: translateY(-1px);
+  border-color: var(--mmm-border-strong) !important;
+}
+
+/* A hairline rule under section titles instead of a card header strip. */
+.mmm-rule {
+  border-bottom: 1px solid var(--mmm-border);
 }
 
 #global-date-range.mmm-date-range,
 #global-date-range .DateRangePicker,
 #global-date-range .DateRangePickerInput {
   background-color: var(--mmm-surface-2) !important;
-  border-radius: 8px;
+  border-radius: 6px;
 }
 
 #global-date-range .DateRangePickerInput {
-  border: 1px solid #3a3f47 !important;
+  border: 1px solid var(--mmm-border) !important;
   overflow: hidden;
 }
 
@@ -55,5 +85,5 @@ body,
 }
 
 #global-date-range .DateInput_input__focused {
-  background-color: #1f242c !important;
+  background-color: #21262e !important;
 }
