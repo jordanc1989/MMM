@@ -4,8 +4,9 @@ FROM python:3.13-slim
 
 # build-essential / g++: pytensor compiles the PyMC model graph to C at runtime
 # when the cached posterior is loaded, so a C++ toolchain must be present.
+# curl / ca-certificates: used by the optional posterior fetch below.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends build-essential \
+    && apt-get install -y --no-install-recommends build-essential ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 
 # uv for fast, fully-locked dependency installs.
@@ -36,6 +37,18 @@ RUN uv sync --frozen --no-dev
 # Copy the rest of the application (includes the pre-fitted data/mmm_idata.nc
 # cache, so startup loads the posterior instead of resampling).
 COPY --chown=user . .
+
+# Some platforms (e.g. Hugging Face Spaces) hand the Docker build Git LFS files
+# as small pointer stubs rather than the real bytes, which would make the app
+# refit on every container start. When POSTERIOR_URL is provided, (re)fetch the
+# real posterior so the cached fit is baked into the image. Empty default => the
+# COPY'd file is used as-is (correct for a normal local `docker build`).
+ARG POSTERIOR_URL=""
+RUN if [ -n "$POSTERIOR_URL" ]; then \
+        echo "Fetching posterior from $POSTERIOR_URL" \
+        && curl -fsSL "$POSTERIOR_URL" -o data/mmm_idata.nc \
+        && test "$(stat -c%s data/mmm_idata.nc)" -gt 1000000; \
+    fi
 
 EXPOSE 7860
 
