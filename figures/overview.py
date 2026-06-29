@@ -109,7 +109,7 @@ def revenue_waterfall(result: ModelResult) -> go.Figure:
     if include_trend:
         labels.append("Trend")
         values.append(trend_total)
-    labels.extend(["Seasonality", "Controls", *result.channels, "Predicted Revenue"])
+    labels.extend(["Seasonality", "Controls", *result.channels, "Predicted revenue"])
     values.extend(
         [
             seasonality_total,

@@ -61,7 +61,7 @@ def build_response_curves(result: ModelResult) -> dmc.Stack:
         gap="lg",
         children=[
             page_header(
-                "Response Curves",
+                "Response curves",
                 "Saturation curves from fitted geometric adstock + logistic saturation. "
                 "The shaded band is the 94% posterior HDI.",
             ),
@@ -88,7 +88,7 @@ def build_response_curves(result: ModelResult) -> dmc.Stack:
                 ],
             ),
             section(
-                "Saturation Curve",
+                "Saturation curve",
                 "Expected incremental weekly revenue as a function of sustained weekly spend.",
                 dmc.Stack(
                     gap="md",

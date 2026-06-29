@@ -273,7 +273,7 @@ def channel_table(result: ModelResult) -> dmc.Table:
             [
                 dmc.TableTh("Channel"),
                 dmc.TableTh("Spend"),
-                dmc.TableTh("Attributed Revenue"),
+                dmc.TableTh("Attributed revenue"),
                 dmc.TableTh("Share"),
                 dmc.TableTh("ROI"),
             ]
@@ -296,11 +296,11 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
         gap="lg",
         children=[
             page_header(
-                "Channel Contributions",
+                "Channel contributions",
                 "How each paid channel builds revenue over time.",
             ),
             section(
-                "Weekly Contribution Stack",
+                "Weekly contribution stack",
                 "Baseline at posterior mean, posterior-mean channel layers, and a 94% band on "
                 "total paid media only (uncertainty in baseline/controls/seasonality not shown).",
                 dcc.Graph(
@@ -324,7 +324,7 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
                 children=[
                     dmc.GridCol(
                         section(
-                            "Share of Paid Contribution",
+                            "Share of paid contribution",
                             "Attributed revenue share across the full fitted period.",
                             dcc.Graph(
                                 id=CONTRIBUTION_SHARE_GRAPH_ID,
@@ -336,7 +336,7 @@ def build_contributions(result: ModelResult) -> dmc.Stack:
                     ),
                     dmc.GridCol(
                         section(
-                            "Per-Channel Summary",
+                            "Per-channel summary",
                             "Spend, attributed revenue and ROI for the full fitted period.",
                             dmc.Box(id=CONTRIBUTIONS_TABLE_ID, children=channel_table(result)),
                         ),

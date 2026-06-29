@@ -10,8 +10,8 @@ from layouts.response_curves import build_response_curves, response_stats
 dash.register_page(
     __name__,
     path="/response-curves",
-    name="Response Curves",
-    title="Response Curves | Bayesian MMM Dashboard",
+    name="Response curves",
+    title="Response curves | Bayesian MMM Dashboard",
     order=2,
     icon="tabler:chart-ppf",
 )

@@ -451,7 +451,7 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     )
 
     controls = section(
-        "Reallocate Budget",
+        "Reallocate budget",
         "Sliders are weights. Total spend is locked; the mix changes proportionally.",
         dmc.Stack(
             gap="lg",
@@ -574,7 +574,7 @@ def build_optimiser(result: ModelResult) -> dmc.Stack:
     )
 
     title_block = page_header(
-        "Budget Optimiser",
+        "Budget optimiser",
         "Explore reallocations at a fixed total budget and see the predicted revenue response.",
     )
 

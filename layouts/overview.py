@@ -561,7 +561,7 @@ def build_overview(result: ModelResult) -> dmc.Stack:
         children=[
             dmc.GridCol(
                 section(
-                    "Actual vs Predicted Revenue",
+                    "Actual vs predicted revenue",
                     "Weekly observed revenue, posterior mean fit, and 94% posterior predictive band.",
                     dmc.Stack(
                         gap="sm",
@@ -578,7 +578,7 @@ def build_overview(result: ModelResult) -> dmc.Stack:
             ),
             dmc.GridCol(
                 section(
-                    "Revenue Decomposition",
+                    "Revenue decomposition",
                     (
                         "Intercept, trend, seasonality, controls, and channel lift for the selected window."
                         if TREND_COLUMNS
@@ -681,7 +681,7 @@ def build_overview(result: ModelResult) -> dmc.Stack:
         gap="lg",
         children=[
             page_header(
-                "Model Overview",
+                "Model overview",
                 f"{result.geo} · weekly media-mix model with {len(result.channels)} "
                 "paid channels.",
             ),
