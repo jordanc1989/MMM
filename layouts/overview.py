@@ -17,7 +17,6 @@ from components import (
 )
 from components.ids import (
     ACTUAL_PREDICTED_GRAPH_ID,
-    OVERVIEW_DATE_STORE,
     OVERVIEW_KPI_GRID_ID,
     OVERVIEW_RANGE_PRESET,
     OVERVIEW_RESIDUALS_ID,
@@ -636,7 +635,7 @@ def build_overview(result: ModelResult) -> dmc.Stack:
                                     children=[
                                         dmc.Text("Residual diagnostics", size="sm", fw=600),
                                         dmc.Text(
-                                            "Residuals vs time and weekly ACF — expand to view.",
+                                            "Residuals vs time and weekly ACF",
                                             size="xs",
                                             c="dimmed",
                                         ),
